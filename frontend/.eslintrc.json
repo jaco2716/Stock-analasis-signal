@@ -1,0 +1,61 @@
+{
+  "extends": "next/core-web-vitals",
+  "rules": {
+    "no-restricted-imports": [
+      "error",
+      {
+        "patterns": [
+          {
+            "group": ["@supabase/supabase-js", "@supabase/ssr"],
+            "message": "Do not import Supabase clients in UI code. Use lib/api/* instead — that layer wraps lib/supabase/server.ts."
+          }
+        ]
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": ["lib/api/**/*.ts", "lib/supabase/**/*.ts", "app/_actions/**/*.ts", "middleware.ts"],
+      "rules": {
+        "no-restricted-imports": "off"
+      }
+    },
+    {
+      "files": ["components/**/*.{ts,tsx}"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["@supabase/supabase-js", "@supabase/ssr"],
+                "message": "Components must not import Supabase. Receive plain typed data via props."
+              },
+              {
+                "group": ["@/lib/supabase/server", "**/lib/supabase/server"],
+                "message": "Components must not import the server Supabase client. Use lib/api/* on the server, or pass data via props."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["app/**/*.{ts,tsx}"],
+      "excludedFiles": ["app/_actions/**/*.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["@supabase/supabase-js", "@supabase/ssr"],
+                "message": "App routes must call lib/api/* — do not import Supabase directly."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

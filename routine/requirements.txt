@@ -1,0 +1,10 @@
+anthropic>=0.40.0
+supabase>=2.9.0
+yfinance>=0.2.50
+pandas>=2.2.0
+pandas-ta>=0.3.14b0
+requests>=2.32.0
+python-dotenv>=1.0.0
+pydantic>=2.9.0
+pydantic-settings>=2.6.0
+tenacity>=9.0.0
