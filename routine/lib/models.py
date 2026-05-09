@@ -25,7 +25,8 @@ class Holding:
     profile_id: UUID
     ticker: str
     name: str
-    position_dkk: float | None
+    quantity: float | None
+    avg_buy_price_dkk: float | None
     kind: HoldingKind
 
 

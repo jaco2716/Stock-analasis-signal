@@ -119,17 +119,22 @@ To extend **what data** the model sees, add fields to the brief in `routine/lib/
 Pure SQL; no code or redeploy needed.
 
 ```sql
--- Add an owned holding to the default profile
-insert into portfolio_holdings (profile_id, ticker, name, position_dkk, kind)
-select id, 'ORSTED.CO', 'Orsted', 30000.00, 'owned'
+-- Add an owned holding to the default profile (qty + per-share buy price)
+insert into portfolio_holdings (profile_id, ticker, name, quantity, avg_buy_price_dkk, kind)
+select id, 'ORSTED.CO', 'Orsted', 100, 250.00, 'owned'
 from profiles where slug = 'default';
 
 -- Promote watchlist -> owned (delete the watchlist row, add owned)
 delete from portfolio_holdings
  where ticker = 'MAERSK-B.CO' and kind = 'watchlist';
-insert into portfolio_holdings (profile_id, ticker, name, position_dkk, kind)
-select id, 'MAERSK-B.CO', 'A.P. Moller - Maersk B', 25000.00, 'owned'
+insert into portfolio_holdings (profile_id, ticker, name, quantity, avg_buy_price_dkk, kind)
+select id, 'MAERSK-B.CO', 'A.P. Moller - Maersk B', 25, 950.00, 'owned'
 from profiles where slug = 'default';
+
+-- Update qty and/or avg buy price for an existing owned holding
+update portfolio_holdings
+   set quantity = 60, avg_buy_price_dkk = 770.00
+ where ticker = 'NOVO-B.CO' and kind = 'owned' and profile_id = '<id>';
 
 -- Remove
 delete from portfolio_holdings where ticker = 'XYZ.CO' and profile_id = '<id>';

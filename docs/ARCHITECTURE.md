@@ -71,6 +71,7 @@ The methodology (RSI thresholds, MACD interpretation, decision rules per kind, c
    - Inserts a row into `analysis_runs` with `status = 'running'`, returns the `run_id`.
    - Loads all `profiles` where `is_active = true`.
    - For each profile, loads `portfolio_holdings`. For each ticker, pulls 6mo bars (cached per run) and computes the indicator set.
+   - Derives per owned holding: `cost_basis_dkk = quantity × avg_buy_price_dkk`, `current_value_dkk = quantity × current_price`, `pnl_dkk`, `pnl_pct`. Watchlist rows leave these `null`.
    - Writes `/tmp/stock-analysis-brief.json` with the full input the agent will reason over.
    - Prints `run_id` + `brief_path` for the agent to capture.
 3. The agent reads the brief. For each (profile, holding):

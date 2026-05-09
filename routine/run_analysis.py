@@ -183,12 +183,18 @@ def cmd_emit_signal(args: argparse.Namespace) -> int:
     if not args.dry_run:
         supabase_client.insert_signal(signal)
 
+    ctx = discord.HoldingContext(
+        quantity=holding_section.get("quantity"),
+        cost_basis_dkk=holding_section.get("cost_basis_dkk"),
+        current_value_dkk=holding_section.get("current_value_dkk"),
+        pnl_pct=holding_section.get("pnl_pct"),
+        is_watchlist=(holding_section.get("kind") == "watchlist"),
+    )
     discord.post_signal(
         signal=signal,
         profile=profile,
         indicators=indicators,
-        position_dkk=holding_section.get("position_dkk"),
-        is_watchlist=(holding_section.get("kind") == "watchlist"),
+        ctx=ctx,
         dry_run=args.dry_run,
     )
 

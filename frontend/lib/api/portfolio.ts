@@ -29,14 +29,14 @@ export const insertHolding = async (input: NewHolding): Promise<Holding> => {
   return data;
 };
 
-export const updateHoldingPosition = async (
+export const updateHolding = async (
   id: string,
-  positionDkk: number | null,
+  patch: { quantity: number | null; avg_buy_price_dkk: number | null },
 ): Promise<Holding> => {
   const supabase = createServiceClient();
   const { data, error } = await supabase
     .from("portfolio_holdings")
-    .update({ position_dkk: positionDkk })
+    .update(patch)
     .eq("id", id)
     .select()
     .single();

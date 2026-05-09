@@ -19,7 +19,7 @@ A logical portfolio. The system supports many; the seed creates one called `Defa
 
 ### `portfolio_holdings`
 
-Tickers attached to a profile, either owned (with a DKK position size) or a watchlist entry.
+Tickers attached to a profile, either owned (with quantity + average buy price) or a watchlist entry. Cost basis, current value, and unrealized P&L are derived per run from live prices in `routine/lib/brief.py`; they are **not** stored.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -27,7 +27,8 @@ Tickers attached to a profile, either owned (with a DKK position size) or a watc
 | `profile_id` | `uuid` FK -> `profiles.id` | `on delete cascade` |
 | `ticker` | `text` | Copenhagen-suffixed, e.g. `NOVO-B.CO` |
 | `name` | `text` nullable | Human-readable |
-| `position_dkk` | `numeric(14,2)` nullable | Required when `kind = 'owned'` (CHECK constraint) |
+| `quantity` | `numeric(18,6)` nullable | Shares held; required when `kind = 'owned'` (CHECK constraint). Six decimals for fractional shares. |
+| `avg_buy_price_dkk` | `numeric(14,4)` nullable | Per-share cost in DKK; required when `kind = 'owned'`. Four decimals for sub-DKK precision. |
 | `kind` | `holding_kind` enum | `owned` \| `watchlist` |
 | `added_at` / `updated_at` | `timestamptz` | |
 

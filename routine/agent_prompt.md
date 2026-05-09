@@ -64,14 +64,25 @@ Combine the brief's indicators with the news. Use these heuristics:
 
 ### 2c. Decide
 
+For each owned holding the brief now exposes share-level economics:
+
+- `quantity` — shares held
+- `avg_buy_price_dkk` — per-share cost
+- `cost_basis_dkk` — `quantity × avg_buy_price_dkk`
+- `current_price` — last close from yfinance
+- `current_value_dkk` — `quantity × current_price`
+- `pnl_dkk`, `pnl_pct` — unrealized P&L
+
 Apply per-kind decision rules:
 
 **Owned holdings**
 
 - Default: `HOLD`.
-- `SELL` when: strong bearish technicals (RSI rolling over from >70, MACD bearish crossover, price below SMA50 and SMA200) **and** confirming bad news, **or** a clear catalyst-driven thesis-break.
-- `BUY` (i.e. add to the position) when: bullish technicals + supportive news + the position is small relative to the rest of the profile (use the `position_dkk` of other holdings as a rough yardstick).
-- Keep position size in mind: a 50,000 DKK stake near a known top is a different decision than a 5,000 DKK stake.
+- `SELL` (lock in gain) when: `pnl_pct > +25%` **and** technicals weakening (RSI rolling over from >70, MACD bearish crossover, price losing SMA50). Confirming bad news raises confidence; absence of news lowers it but doesn't veto a clear technical signal at large unrealized gains.
+- `SELL` (cut loss) when: `pnl_pct < -15%` **and** trend continues bearish (price below all SMAs, MACD bearish, no catalyst for reversal). Don't average down on a deteriorating thesis.
+- `BUY` (add to position) when: bullish technicals + supportive news + the position is small relative to the rest of the profile (use `cost_basis_dkk` of other holdings as a rough yardstick).
+- Within `±10%` P&L: technicals + news drive the call. P&L is not the deciding factor; small unrealized moves are noise.
+- Keep position size in mind: a 37,500 DKK cost basis near a known top is a different decision than a 3,750 DKK cost basis.
 
 **Watchlist holdings**
 
@@ -98,10 +109,10 @@ python -m run_analysis emit-signal \
   --ticker "$TICKER" \
   --signal "BUY|SELL|HOLD" \
   --confidence 0.75 \
-  --reasoning "RSI 28 from oversold, MACD bullish crossover yesterday, golden cross intact. Q1 earnings beat by 6% on May 4 with raised guidance. Position is small (5k DKK) so a 5k add-on is reasonable."
+  --reasoning "RSI 28 from oversold, MACD bullish crossover yesterday, golden cross intact. Q1 earnings beat 6% on May 4 with raised guidance. Cost basis 5,000 DKK at -3% P&L; small position relative to rest of profile, so adding is reasonable."
 ```
 
-**Reasoning discipline**: 2–3 sentences, citing **specific numbers from the brief** (RSI value, MACD direction, % change) and **specific news items** (date + catalyst). No generic statements. Max ~600 chars to stay well under the 800-char DB limit and 1024-char Discord field limit.
+**Reasoning discipline**: 2–3 sentences, citing **specific numbers from the brief** (RSI value, MACD direction, % change, P&L % for owned holdings) and **specific news items** (date + catalyst). No generic statements. Max ~600 chars to stay well under the 800-char DB limit and 1024-char Discord field limit.
 
 **Emit incrementally** — do not accumulate all signals and dump them at the end. Each `emit-signal` call posts to Discord immediately, so the user sees signals stream in. A failure mid-loop leaves earlier signals committed instead of losing the whole run.
 

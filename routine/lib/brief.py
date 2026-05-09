@@ -36,20 +36,50 @@ def _macd_histogram(indicators: Indicators) -> float | None:
     return float(indicators.macd - indicators.macd_signal)
 
 
+def _pnl(
+    quantity: float | None, avg_buy: float | None, current_price: float
+) -> tuple[float | None, float | None, float | None, float | None]:
+    """Return (cost_basis_dkk, current_value_dkk, pnl_dkk, pnl_pct) — all None for watchlist."""
+    if quantity is None or avg_buy is None:
+        return None, None, None, None
+    cost_basis = quantity * avg_buy
+    current_value = quantity * current_price
+    pnl = current_value - cost_basis
+    pct = (current_value / cost_basis - 1.0) * 100.0 if cost_basis else None
+    return (
+        round(cost_basis, 2),
+        round(current_value, 2),
+        round(pnl, 2),
+        round(pct, 2) if pct is not None else None,
+    )
+
+
 def build_holding_section(
     holding: Holding, prices: pd.DataFrame, indicators: Indicators
 ) -> dict[str, Any]:
     closes = prices["Close"].astype(float).tail(_RECENT_CLOSES).tolist()
+    current_price = float(prices["Close"].astype(float).iloc[-1])
+
+    cost_basis, current_value, pnl_dkk, pnl_pct = _pnl(
+        holding.quantity, holding.avg_buy_price_dkk, current_price
+    )
+
     ind = asdict(indicators)
     ind["macd_histogram"] = _macd_histogram(indicators)
     ind["golden_cross"] = _golden_cross(indicators)
     ind["death_cross"] = _death_cross(indicators)
+
     return {
         "ticker": holding.ticker,
         "name": holding.name,
         "kind": holding.kind,
-        "position_dkk": holding.position_dkk,
-        "current_price": float(prices["Close"].astype(float).iloc[-1]),
+        "quantity": holding.quantity,
+        "avg_buy_price_dkk": holding.avg_buy_price_dkk,
+        "cost_basis_dkk": cost_basis,
+        "current_price": current_price,
+        "current_value_dkk": current_value,
+        "pnl_dkk": pnl_dkk,
+        "pnl_pct": pnl_pct,
         "currency": "DKK",
         "price_change_30d_pct": indicators.pct_change_30d,
         "recent_closes": [float(c) for c in closes],

@@ -6,7 +6,7 @@ import { z } from "zod";
 import {
   deleteHolding,
   insertHolding,
-  updateHoldingPosition,
+  updateHolding,
 } from "@/lib/api/portfolio";
 import type { ActionResult } from "@/lib/types";
 
@@ -17,6 +17,20 @@ const tickerSchema = z
   .max(16)
   .transform((s) => s.toUpperCase());
 
+const ownedFieldsRefine = (
+  v: { kind: "owned" | "watchlist"; quantity?: number; avg_buy_price_dkk?: number },
+) => {
+  if (v.kind !== "owned") return true;
+  return (
+    typeof v.quantity === "number" &&
+    Number.isFinite(v.quantity) &&
+    v.quantity > 0 &&
+    typeof v.avg_buy_price_dkk === "number" &&
+    Number.isFinite(v.avg_buy_price_dkk) &&
+    v.avg_buy_price_dkk > 0
+  );
+};
+
 const addHoldingSchema = z
   .object({
     profileId: z.string().uuid(),
@@ -24,24 +38,19 @@ const addHoldingSchema = z
     ticker: tickerSchema,
     name: z.string().trim().max(200).optional().or(z.literal("").transform(() => undefined)),
     kind: z.enum(["owned", "watchlist"]),
-    position_dkk: z.number().optional(),
+    quantity: z.number().optional(),
+    avg_buy_price_dkk: z.number().optional(),
   })
-  .refine(
-    (v) =>
-      v.kind !== "owned" ||
-      (typeof v.position_dkk === "number" &&
-        !Number.isNaN(v.position_dkk) &&
-        v.position_dkk > 0),
-    {
-      message: "Position (DKK) is required for owned holdings",
-      path: ["position_dkk"],
-    },
-  );
+  .refine(ownedFieldsRefine, {
+    message: "Quantity and avg buy price are required for owned holdings",
+    path: ["quantity"],
+  });
 
-const updatePositionSchema = z.object({
+const updateHoldingSchema = z.object({
   id: z.string().uuid(),
   profileSlug: z.string().min(1),
-  position_dkk: z.number().positive("Position must be greater than zero"),
+  quantity: z.number().positive("Quantity must be greater than zero"),
+  avg_buy_price_dkk: z.number().positive("Avg buy price must be greater than zero"),
 });
 
 const removeHoldingSchema = z.object({
@@ -57,14 +66,16 @@ export const addHolding = async (
 ): Promise<ActionResult> => {
   try {
     const parsed = addHoldingSchema.parse(input);
+    const isOwned = parsed.kind === "owned";
     await insertHolding({
       profile_id: parsed.profileId,
       ticker: parsed.ticker,
       name: parsed.name ?? parsed.ticker,
       kind: parsed.kind,
-      position_dkk:
-        parsed.kind === "owned" && typeof parsed.position_dkk === "number"
-          ? parsed.position_dkk
+      quantity: isOwned && typeof parsed.quantity === "number" ? parsed.quantity : null,
+      avg_buy_price_dkk:
+        isOwned && typeof parsed.avg_buy_price_dkk === "number"
+          ? parsed.avg_buy_price_dkk
           : null,
     });
     revalidatePath(`/p/${parsed.profileSlug}`, "page");
@@ -74,12 +85,15 @@ export const addHolding = async (
   }
 };
 
-export const updatePosition = async (
-  input: z.input<typeof updatePositionSchema>,
+export const updateHoldingAction = async (
+  input: z.input<typeof updateHoldingSchema>,
 ): Promise<ActionResult> => {
   try {
-    const parsed = updatePositionSchema.parse(input);
-    await updateHoldingPosition(parsed.id, parsed.position_dkk);
+    const parsed = updateHoldingSchema.parse(input);
+    await updateHolding(parsed.id, {
+      quantity: parsed.quantity,
+      avg_buy_price_dkk: parsed.avg_buy_price_dkk,
+    });
     revalidatePath(`/p/${parsed.profileSlug}`, "page");
     return { ok: true };
   } catch (e) {

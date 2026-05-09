@@ -2,6 +2,7 @@
 
 import logging
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import requests
@@ -18,16 +19,59 @@ _COLORS: dict[str, int] = {
 }
 
 
+@dataclass(frozen=True)
+class HoldingContext:
+    """Per-holding numbers needed by the embed; all None for watchlist."""
+
+    quantity: float | None
+    cost_basis_dkk: float | None
+    current_value_dkk: float | None
+    pnl_pct: float | None
+    is_watchlist: bool
+
+
 def _truncate(text: str, n: int) -> str:
     return text if len(text) <= n else text[: n - 1] + "…"
+
+
+def _fmt_dkk(n: float | None) -> str:
+    return "n/a" if n is None else f"{n:,.0f}".replace(",", ".")
+
+
+def _fmt_qty(n: float | None) -> str:
+    if n is None:
+        return "n/a"
+    # Strip trailing zeros for whole-share counts.
+    return f"{n:.4f}".rstrip("0").rstrip(".") or "0"
+
+
+def _fmt_pnl_pct(p: float | None) -> str:
+    if p is None:
+        return "n/a"
+    sign = "+" if p >= 0 else ""
+    return f"{sign}{p:.1f}%"
+
+
+def _position_fields(ctx: HoldingContext) -> list[dict]:
+    if ctx.is_watchlist:
+        return [{"name": "Position", "value": "Watchlist", "inline": True}]
+    now_value = (
+        f"{_fmt_dkk(ctx.current_value_dkk)} ({_fmt_pnl_pct(ctx.pnl_pct)})"
+        if ctx.current_value_dkk is not None
+        else "n/a"
+    )
+    return [
+        {"name": "Qty", "value": _fmt_qty(ctx.quantity), "inline": True},
+        {"name": "Cost (DKK)", "value": _fmt_dkk(ctx.cost_basis_dkk), "inline": True},
+        {"name": "Now (DKK)", "value": now_value, "inline": True},
+    ]
 
 
 def build_payload(
     signal: Signal,
     profile: Profile,
     indicators: Indicators,
-    position_dkk: float | None,
-    is_watchlist: bool,
+    ctx: HoldingContext,
     using_fallback: bool,
 ) -> dict:
     title = f"{signal.signal_type} {signal.ticker}"
@@ -36,14 +80,11 @@ def build_payload(
 
     rsi = f"{indicators.rsi_14:.1f}" if indicators.rsi_14 is not None else "n/a"
     price = f"{indicators.last_close:.2f}"
-    position_field = (
-        "Watchlist" if is_watchlist or position_dkk is None else f"{position_dkk:.0f} DKK"
-    )
 
-    fields = [
+    fields: list[dict] = [
         {"name": "Price (DKK)", "value": price, "inline": True},
         {"name": "RSI14", "value": rsi, "inline": True},
-        {"name": "Position", "value": position_field, "inline": True},
+        *_position_fields(ctx),
         {"name": "Confidence", "value": f"{signal.confidence * 100:.0f}%", "inline": True},
         {"name": "Reasoning", "value": _truncate(signal.reasoning, 1024), "inline": False},
     ]
@@ -66,8 +107,7 @@ def post_signal(
     signal: Signal,
     profile: Profile,
     indicators: Indicators,
-    position_dkk: float | None = None,
-    is_watchlist: bool = False,
+    ctx: HoldingContext,
     dry_run: bool = False,
 ) -> None:
     settings = get_settings()
@@ -78,8 +118,7 @@ def post_signal(
         signal=signal,
         profile=profile,
         indicators=indicators,
-        position_dkk=position_dkk,
-        is_watchlist=is_watchlist,
+        ctx=ctx,
         using_fallback=using_fallback,
     )
 

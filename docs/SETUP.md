@@ -247,9 +247,14 @@ Locally you do not run the analysis loop yourself — that is the agent's job. I
 insert into profiles (name, slug, discord_webhook_url, is_active)
 values ('Aggressive', 'aggressive', 'https://discord.com/api/webhooks/...', true);
 
--- 2. Add holdings
-insert into portfolio_holdings (profile_id, ticker, name, position_dkk, kind)
-select id, 'ORSTED.CO', 'Orsted', 25000.00, 'owned'
+-- 2. Add holdings (quantity = shares held; avg_buy_price_dkk = per share)
+insert into portfolio_holdings (profile_id, ticker, name, quantity, avg_buy_price_dkk, kind)
+select id, 'ORSTED.CO', 'Orsted', 30, 250.00, 'owned'
+from profiles where slug = 'aggressive';
+
+-- Watchlist row: leave quantity and avg_buy_price_dkk null
+insert into portfolio_holdings (profile_id, ticker, name, quantity, avg_buy_price_dkk, kind)
+select id, 'CARLB.CO', 'Carlsberg B', null, null, 'watchlist'
 from profiles where slug = 'aggressive';
 ```
 

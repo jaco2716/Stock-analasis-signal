@@ -13,6 +13,22 @@ export const formatPercent = (n: number): string =>
     maximumFractionDigits: 0,
   }).format(n);
 
+export const formatQuantity = (n: number | null | undefined): string => {
+  if (n == null) return "—";
+  return new Intl.NumberFormat("da-DK", { maximumFractionDigits: 4 }).format(n);
+};
+
+export const formatPnL = (
+  pct: number | null | undefined,
+): { label: string; tone: "pos" | "neg" | "neutral" } => {
+  if (pct == null) return { label: "—", tone: "neutral" };
+  const sign = pct > 0 ? "+" : "";
+  return {
+    label: `${sign}${pct.toFixed(1)}%`,
+    tone: pct > 0 ? "pos" : pct < 0 ? "neg" : "neutral",
+  };
+};
+
 export const formatRelativeTime = (d: Date | string): string => {
   const date = typeof d === "string" ? new Date(d) : d;
   const diffMs = Date.now() - date.getTime();

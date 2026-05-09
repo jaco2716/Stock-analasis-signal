@@ -27,6 +27,11 @@ import {
 import { addHolding } from "@/app/_actions/holdings";
 import type { HoldingKind } from "@/lib/types";
 
+const positiveOptionalNumber = z
+  .string()
+  .optional()
+  .transform((v) => (v == null || v === "" ? undefined : Number(v)));
+
 const formSchema = z
   .object({
     ticker: z
@@ -37,18 +42,24 @@ const formSchema = z
       .transform((s) => s.toUpperCase()),
     name: z.string().trim().max(200).optional(),
     kind: z.enum(["owned", "watchlist"]),
-    position_dkk: z.string().optional(),
+    quantity: positiveOptionalNumber,
+    avg_buy_price_dkk: positiveOptionalNumber,
   })
   .superRefine((v, ctx) => {
-    if (v.kind === "owned") {
-      const num = Number(v.position_dkk);
-      if (!Number.isFinite(num) || num <= 0) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["position_dkk"],
-          message: "Position (DKK) is required for owned holdings",
-        });
-      }
+    if (v.kind !== "owned") return;
+    if (!Number.isFinite(v.quantity) || (v.quantity ?? 0) <= 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["quantity"],
+        message: "Quantity is required for owned holdings",
+      });
+    }
+    if (!Number.isFinite(v.avg_buy_price_dkk) || (v.avg_buy_price_dkk ?? 0) <= 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["avg_buy_price_dkk"],
+        message: "Avg buy price is required for owned holdings",
+      });
     }
   });
 
@@ -72,38 +83,47 @@ export const AddTickerForm = ({
       ticker: "",
       name: "",
       kind: "owned",
-      position_dkk: "",
+      quantity: "",
+      avg_buy_price_dkk: "",
     },
   });
 
   const onSubmit = (values: FormValues) => {
     startTransition(async () => {
-      const positionNum = Number(values.position_dkk);
+      const isOwned = values.kind === "owned";
+      const qty = Number(values.quantity);
+      const avg = Number(values.avg_buy_price_dkk);
       const result = await addHolding({
         profileId,
         profileSlug,
         ticker: values.ticker,
         name: values.name?.trim() ? values.name : undefined,
         kind: values.kind,
-        position_dkk:
-          values.kind === "owned" && Number.isFinite(positionNum)
-            ? positionNum
-            : undefined,
+        quantity: isOwned && Number.isFinite(qty) ? qty : undefined,
+        avg_buy_price_dkk: isOwned && Number.isFinite(avg) ? avg : undefined,
       });
       if (result.ok) {
         toast.success(`Added ${values.ticker.toUpperCase()}`);
-        form.reset({ ticker: "", name: "", kind: values.kind, position_dkk: "" });
+        form.reset({
+          ticker: "",
+          name: "",
+          kind: values.kind,
+          quantity: "",
+          avg_buy_price_dkk: "",
+        });
       } else {
         toast.error(result.error);
       }
     });
   };
 
+  const ownedDisabled = kind !== "owned";
+
   return (
     <Form {...form}>
       <form
         onSubmit={form.handleSubmit(onSubmit)}
-        className="grid grid-cols-1 gap-4 sm:grid-cols-5"
+        className="grid grid-cols-1 gap-4 sm:grid-cols-6"
       >
         <FormField
           control={form.control}
@@ -165,22 +185,44 @@ export const AddTickerForm = ({
         />
         <FormField
           control={form.control}
-          name="position_dkk"
+          name="quantity"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Position (DKK)</FormLabel>
+              <FormLabel>Quantity</FormLabel>
               <FormControl>
                 <Input
                   type="number"
                   inputMode="decimal"
                   min="0"
                   step="any"
-                  placeholder={kind === "owned" ? "Required" : "Not used"}
-                  disabled={kind !== "owned"}
+                  placeholder={ownedDisabled ? "Not used" : "Shares"}
+                  disabled={ownedDisabled}
                   {...field}
                 />
               </FormControl>
-              <FormDescription>Owned holdings only.</FormDescription>
+              <FormDescription>Owned only.</FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={form.control}
+          name="avg_buy_price_dkk"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Avg buy (DKK)</FormLabel>
+              <FormControl>
+                <Input
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="any"
+                  placeholder={ownedDisabled ? "Not used" : "Per share"}
+                  disabled={ownedDisabled}
+                  {...field}
+                />
+              </FormControl>
+              <FormDescription>Per share.</FormDescription>
               <FormMessage />
             </FormItem>
           )}

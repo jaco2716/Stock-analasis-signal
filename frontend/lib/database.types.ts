@@ -53,7 +53,8 @@ export interface Database {
           profile_id: string;
           ticker: string;
           name: string;
-          position_dkk: number | null;
+          quantity: number | null;
+          avg_buy_price_dkk: number | null;
           kind: HoldingKind;
           added_at: string;
           updated_at: string;
@@ -63,7 +64,8 @@ export interface Database {
           profile_id: string;
           ticker: string;
           name: string;
-          position_dkk?: number | null;
+          quantity?: number | null;
+          avg_buy_price_dkk?: number | null;
           kind: HoldingKind;
           added_at?: string;
           updated_at?: string;
@@ -73,7 +75,8 @@ export interface Database {
           profile_id?: string;
           ticker?: string;
           name?: string;
-          position_dkk?: number | null;
+          quantity?: number | null;
+          avg_buy_price_dkk?: number | null;
           kind?: HoldingKind;
           added_at?: string;
           updated_at?: string;

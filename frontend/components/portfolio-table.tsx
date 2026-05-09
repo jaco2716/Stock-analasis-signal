@@ -12,15 +12,20 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { EditPositionDialog } from "@/components/edit-position-dialog";
+import { EditHoldingDialog } from "@/components/edit-holding-dialog";
 import { removeHolding } from "@/app/_actions/holdings";
-import { formatDKK } from "@/lib/format";
+import { formatDKK, formatQuantity } from "@/lib/format";
 import type { Holding } from "@/lib/types";
 
 interface PortfolioTableProps {
   holdings: Holding[];
   profileSlug: string;
 }
+
+const costBasis = (h: Holding): number | null =>
+  h.quantity != null && h.avg_buy_price_dkk != null
+    ? h.quantity * h.avg_buy_price_dkk
+    : null;
 
 export const PortfolioTable = ({
   holdings,
@@ -40,7 +45,9 @@ export const PortfolioTable = ({
         <TableRow>
           <TableHead>Ticker</TableHead>
           <TableHead>Name</TableHead>
-          <TableHead className="text-right">Position</TableHead>
+          <TableHead className="text-right">Qty</TableHead>
+          <TableHead className="text-right">Avg buy (DKK)</TableHead>
+          <TableHead className="text-right">Cost basis</TableHead>
           <TableHead className="w-[120px] text-right">Actions</TableHead>
         </TableRow>
       </TableHeader>
@@ -49,14 +56,17 @@ export const PortfolioTable = ({
           <TableRow key={h.id}>
             <TableCell className="font-mono font-medium">{h.ticker}</TableCell>
             <TableCell>{h.name}</TableCell>
-            <TableCell className="text-right">{formatDKK(h.position_dkk)}</TableCell>
+            <TableCell className="text-right">{formatQuantity(h.quantity)}</TableCell>
+            <TableCell className="text-right">{formatDKK(h.avg_buy_price_dkk)}</TableCell>
+            <TableCell className="text-right">{formatDKK(costBasis(h))}</TableCell>
             <TableCell className="text-right">
               <div className="flex justify-end gap-1">
-                <EditPositionDialog
+                <EditHoldingDialog
                   holdingId={h.id}
                   ticker={h.ticker}
                   profileSlug={profileSlug}
-                  currentPositionDkk={h.position_dkk}
+                  currentQuantity={h.quantity}
+                  currentAvgBuyPriceDkk={h.avg_buy_price_dkk}
                 />
                 <ConfirmDialog
                   trigger={
