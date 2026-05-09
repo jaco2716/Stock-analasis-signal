@@ -29,29 +29,32 @@ select profile_id, ticker, signal_type, confidence, generated_at
 
 When the scheduled run failed and you want to re-execute on demand:
 
-### From your laptop
+### Triggering the scheduled agent on demand (preferred)
+
+From a Claude Code session in this project, call the `schedule` skill and ask it to run the registered routine immediately. The full chain runs end-to-end: `prepare` → per-holding `emit-signal` → `finish-run`. This is the only way to reproduce the actual analysis the agent performs.
+
+### From your laptop (data plumbing only)
+
+You cannot reproduce the agent's judgment locally — the analysis happens inside the scheduled-agent session. But you can smoke-test the data plumbing:
 
 ```bash
 cd routine
 source .venv/bin/activate
-# Make sure routine/.env has SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
-# DEFAULT_DISCORD_WEBHOOK_URL, ANTHROPIC_API_KEY filled in.
-python -m run_analysis
+# .env needs SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, DEFAULT_DISCORD_WEBHOOK_URL.
+
+# Gather data; writes /tmp/stock-analysis-brief.json. --dry-run skips the analysis_runs insert.
+python -m run_analysis prepare --dry-run --verbose
+cat /tmp/stock-analysis-brief.json | jq '.profiles[0].holdings[0]'
+
+# Commit a manual signal (e.g. to test webhook routing) without a real DB write:
+python -m run_analysis emit-signal \
+  --run-id 00000000-0000-0000-0000-000000000000 \
+  --profile-id <id-from-brief> --ticker NOVO-B.CO \
+  --signal HOLD --confidence 0.5 --reasoning "manual webhook smoke" \
+  --dry-run --verbose
 ```
 
-This writes a fresh `analysis_runs` row, fresh signals, and posts to Discord exactly like the agent would.
-
-### Dry run (no writes, no Discord)
-
-```bash
-python -m run_analysis --dry-run
-```
-
-Prints what it would insert and what it would post; useful for verifying the analyzer's output after a prompt change without polluting history.
-
-### Triggering the scheduled agent on demand
-
-From a Claude Code session in this project, call the `schedule` skill and ask it to run the registered routine immediately. The agent picks up its registered cron job out of band.
+To actually re-run analysis, trigger the scheduled agent (above).
 
 ## Discord webhooks
 
@@ -105,13 +108,11 @@ cd frontend && supabase gen types typescript --linked > lib/database.types.ts
 
 ## Swapping the LLM model
 
-The model id lives in one place: `routine/lib/analyzer.py` (the `model=` argument to the Anthropic SDK call). To swap:
+There is no model id in the codebase. Analysis runs inside the scheduled-agent's own Claude session, so the model is whatever the scheduled-agent runtime is currently set to. Change it in the `schedule` skill (or whatever the platform exposes for the agent's model setting), not in the repo.
 
-1. Edit `analyzer.py`, change the `model` string (e.g. `claude-sonnet-4-7-20260101` -> `claude-opus-4-7-20260201`).
-2. Run `python -m run_analysis --dry-run` and eyeball the reasoning quality on a couple of tickers.
-3. Commit + push. The next scheduled run picks it up because the agent re-clones every tick.
+To tune **how** the model analyzes (methodology, decision rules, confidence calibration, indicator interpretation), edit `routine/agent_prompt.md`. Re-register the schedule with the updated prompt. Trigger a manual run and compare a few signals' reasoning before relying on it in cron.
 
-If the new model changes the response shape (e.g. tool-use vs text), update the parser in `analyzer.py` accordingly. There is no other site to touch.
+To extend **what data** the model sees, add fields to the brief in `routine/lib/brief.py` and update the indicator-interpretation section of `agent_prompt.md` to reference them. No other file should need to change.
 
 ## Adding / removing tickers
 
@@ -147,6 +148,6 @@ delete from portfolio_holdings where ticker = 'XYZ.CO' and profile_id = '<id>';
 
 ## Escalation paths
 
-- Anthropic API outage -> <https://status.anthropic.com>. The routine will mark runs `failed`; resume automatically once the API recovers.
-- Supabase outage -> <https://status.supabase.com>. Same behavior.
+- Anthropic / Claude Code outage -> <https://status.anthropic.com>. The scheduled agent fails to fire; nothing in `analysis_runs`. Resumes automatically once the platform recovers.
+- Supabase outage -> <https://status.supabase.com>. `prepare` errors out before inserting the run row; agent should `finish-run --status failed` if a run row exists, otherwise log and exit.
 - Vercel outage -> <https://www.vercel-status.com>. Frontend down; routine unaffected.

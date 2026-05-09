@@ -1,22 +1,52 @@
 # Stock Analysis Routine
 
-Python analysis routine for the stock trading signal system. Iterates active profiles, fetches prices, computes technicals, gathers news via Claude `web_search`, and emits a single LLM-judged BUY/SELL/HOLD signal per holding to Supabase and Discord.
+Python data-plumbing for the stock trading signal system. Fetches prices, computes technicals, writes a JSON brief, then commits per-holding signals to Supabase + Discord. The scheduled-agent session itself does the BUY/SELL/HOLD judgment using the brief + WebSearch — there is no Anthropic SDK call from this codebase.
 
 ## Setup
 
 ```bash
 python -m pip install -r requirements.txt
 python -m pip install -e ".[dev]"   # pytest, pytest-mock, responses, ruff
-cp .env.example .env                # fill in keys
+cp .env.example .env                # fill in Supabase + Discord
 ```
 
-## Run
+No `ANTHROPIC_API_KEY` is required.
+
+## CLI
+
+Three subcommands. The scheduled agent runs them in this order; locally you can do the same to smoke-test.
 
 ```bash
-python -m run_analysis                          # all active profiles
-python -m run_analysis --profile alice          # single profile by slug
-python -m run_analysis --ticker NOVO-B.CO       # single ticker
-python -m run_analysis --dry-run --verbose      # no writes, debug logs
+# 1. Gather data, write brief to /tmp/stock-analysis-brief.json, start an analysis_runs row.
+python -m run_analysis prepare [--profile SLUG] [--ticker SYMBOL] [--dry-run] [--verbose]
+#    -> prints: run_id=<uuid>
+#               brief_path=/tmp/stock-analysis-brief.json
+
+# 2. Commit one decided signal: insert row + post Discord embed.
+python -m run_analysis emit-signal \
+  --run-id <uuid> --profile-id <uuid> --ticker NOVO-B.CO \
+  --signal BUY|SELL|HOLD --confidence 0.75 --reasoning "..." \
+  [--brief-path PATH] [--dry-run] [--verbose]
+
+# 3. Close the run.
+python -m run_analysis finish-run \
+  --run-id <uuid> --status success|partial|failed \
+  [--profile-count N] [--signal-count N] [--error "..."] [--dry-run]
+```
+
+`--dry-run` skips Supabase writes and Discord posts everywhere; `prepare` still writes the brief file (the agent and downstream subcommands need it).
+
+## Local smoke test
+
+```bash
+python -m run_analysis prepare --dry-run --profile default --verbose
+cat /tmp/stock-analysis-brief.json | jq '.profiles[0].holdings[0]'
+
+python -m run_analysis emit-signal \
+  --run-id 00000000-0000-0000-0000-000000000000 \
+  --profile-id <profile-id-from-brief> \
+  --ticker NOVO-B.CO --signal HOLD --confidence 0.5 \
+  --reasoning "smoke test" --dry-run --verbose
 ```
 
 ## Test
@@ -27,6 +57,15 @@ pytest
 
 ## Layout
 
-- `run_analysis.py` — thin orchestrator
-- `lib/` — config, models, DB, market data, technicals, news, analyzer, discord, logging
-- `tests/` — unit tests (no network)
+- `run_analysis.py` — argparse subcommand dispatcher
+- `agent_prompt.md` — the prompt registered with the Anthropic scheduled agent
+- `lib/`
+  - `config.py` — pydantic Settings, env loading
+  - `models.py` — dataclasses mirroring the Supabase schema
+  - `supabase_client.py` — typed read/write wrappers
+  - `market_data.py` — yfinance + per-run cache + retries
+  - `technicals.py` — pure indicator math (RSI, SMAs, MACD, %30d)
+  - `brief.py` — assembles the JSON brief consumed by the agent
+  - `discord.py` — embed + 429-aware POST, per-profile webhook fallback
+  - `logging.py` — logger setup
+- `tests/` — pytest unit tests (no network)

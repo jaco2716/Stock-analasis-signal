@@ -35,8 +35,9 @@ brew install gh && gh auth login
 Also have ready:
 
 - A GitHub account and an empty repo named e.g. `stock-analysis-signal`.
-- An Anthropic API key (console.anthropic.com -> API Keys).
 - A Discord server where you can create webhooks.
+
+> The analysis runs inside the scheduled-agent session and is billed against your Claude Code subscription. No separate Anthropic API key is required.
 
 ---
 
@@ -121,14 +122,7 @@ Routing rule: if `profiles.discord_webhook_url` is set, the routine posts there;
 
 ---
 
-## 3. Anthropic API key
-
-1. <https://console.anthropic.com> -> **API Keys** -> **Create Key**. Name it `stock-analysis-signal-routine`.
-2. Save as `ANTHROPIC_API_KEY`. The routine uses it; the scheduled-agent harness uses its own credentials separately.
-
----
-
-## 4. GitHub repo
+## 3. GitHub repo
 
 The scheduled agent clones the repo on every run (it is stateless between runs), so the repo must be pushed before you register the schedule.
 
@@ -144,16 +138,16 @@ Capture the clone URL (HTTPS form) -> `GIT_REPO_URL`. If the repo is private, al
 
 ---
 
-## 5. Vercel deployment (frontend)
+## 4. Vercel deployment (frontend)
 
-### 5.1 Import the project
+### 4.1 Import the project
 
 1. <https://vercel.com/new> -> **Import** the GitHub repo.
 2. **Root Directory**: `frontend`.
 3. **Framework Preset**: Next.js (auto-detected).
 4. **Build Command**: leave default (`next build`).
 
-### 5.2 Environment variables
+### 4.2 Environment variables
 
 In **Settings -> Environment Variables** add (Production + Preview + Development):
 
@@ -165,61 +159,50 @@ In **Settings -> Environment Variables** add (Production + Preview + Development
 
 Click **Deploy**.
 
-### 5.3 Verify
+### 4.3 Verify
 
 Open the deployed URL. The dashboard should render the seeded `Default` profile with NOVO-B.CO and MAERSK-B.CO. If you see a blank state, check the Vercel build logs and the Supabase logs (Project -> Logs -> API).
 
 ---
 
-## 6. Scheduled agent (the routine)
+## 5. Scheduled agent (the routine)
 
-The routine runs as an Anthropic-managed scheduled agent. The agent is stateless: every fire-time it clones the repo, installs deps, runs the script, and exits. Schedule it via Claude Code's `schedule` skill from this project.
+The routine runs as an Anthropic-managed scheduled agent. The agent is stateless: every fire-time it clones the repo, installs deps, prepares a data brief, decides each signal **inside its own Claude session** (using the brief + the `WebSearch` tool), commits each signal back through the script, and exits. Schedule it via Claude Code's `schedule` skill from this project.
 
-### 6.1 Required environment for the agent
+### 5.1 Required environment for the agent
 
 Configure these as agent-level secrets when the `schedule` skill prompts for them:
 
+- `GIT_REPO_URL` — the clone URL the agent will use; embed a token if private
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `DEFAULT_DISCORD_WEBHOOK_URL`
-- `ANTHROPIC_API_KEY`
-- `GIT_REPO_URL` (the form the clone command will use; embed a token if private)
 
-### 6.2 Register the schedule
+No `ANTHROPIC_API_KEY`. The agent's own session is the LLM; analysis cost is metered against your Claude Code subscription.
+
+### 5.2 Register the schedule
 
 From a Claude Code session in this project, invoke the `schedule` skill and provide:
 
 - **Cron**: `30 9,13,16 * * 1-5`
 - **Timezone**: `Europe/Copenhagen` (DST is honored automatically; the cron is wall-clock local)
-- **Prompt** (the agent runs this each tick):
-
-```
-You are a scheduled runner. Execute the routine, do not modify the repo.
-
-git clone "$GIT_REPO_URL" repo
-cd repo/routine
-python3.12 -m venv .venv && source .venv/bin/activate
-pip install --quiet -r requirements.txt
-python -m run_analysis
-
-Exit non-zero on any failure so the harness records it.
-```
+- **Prompt**: paste the full contents of `routine/agent_prompt.md`. That document is the canonical analysis prompt — methodology, decision rules, confidence calibration, and the three-step CLI flow (`prepare` → per-holding `emit-signal` → `finish-run`).
 
 This produces three runs per weekday: 09:30, 13:30, 16:30 local time.
 
-### 6.3 First manual run
+### 5.3 First manual run
 
 From the `schedule` skill, trigger the routine once on demand to confirm the wiring. Then check:
 
 - `analysis_runs` has a new row with `status = 'success'`.
-- `signals` has rows for each holding (or for everything in the watchlist + owned set).
-- The Discord channel received an embed.
+- `signals` has one row per holding the agent decided on.
+- The Discord channel received an embed per signal as it was emitted (not all at once at the end).
 
 ---
 
-## 7. Local development
+## 6. Local development
 
-### 7.1 Frontend
+### 6.1 Frontend
 
 ```bash
 cd frontend
@@ -231,7 +214,7 @@ pnpm dev
 # http://localhost:3000
 ```
 
-### 7.2 Routine
+### 6.2 Routine
 
 ```bash
 cd routine
@@ -239,19 +222,25 @@ python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-# Fill in SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
-# DEFAULT_DISCORD_WEBHOOK_URL, ANTHROPIC_API_KEY.
+# Fill in SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, DEFAULT_DISCORD_WEBHOOK_URL.
 
-# One-shot run against your real Supabase + Discord:
-python -m run_analysis
+# 1. Smoke the data-gathering side without touching Supabase:
+python -m run_analysis prepare --dry-run --profile default --verbose
+cat /tmp/stock-analysis-brief.json | jq '.profiles[0].holdings[0]'
 
-# Dry run (no DB writes, no Discord post) - prints what it would do:
-python -m run_analysis --dry-run
+# 2. Smoke the commit side (no DB write, no Discord post):
+python -m run_analysis emit-signal \
+  --run-id 00000000-0000-0000-0000-000000000000 \
+  --profile-id <id-from-brief> --ticker NOVO-B.CO \
+  --signal HOLD --confidence 0.5 --reasoning "smoke test" \
+  --dry-run --verbose
 ```
+
+Locally you do not run the analysis loop yourself — that is the agent's job. If you want to exercise the full chain end-to-end, trigger the scheduled agent manually from the `schedule` skill.
 
 ---
 
-## 8. Adding a new profile (operational recipe)
+## 7. Adding a new profile (operational recipe)
 
 ```sql
 -- 1. Insert the profile (optionally with its own webhook)
@@ -268,7 +257,7 @@ The next scheduled run picks the new profile up automatically (it iterates activ
 
 ---
 
-## 9. Sanity checklist
+## 8. Sanity checklist
 
 - [ ] Supabase migrations applied; seed inserted; `select count(*) from profiles` returns `1`.
 - [ ] `frontend/lib/database.types.ts` regenerated and committed.

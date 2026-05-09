@@ -17,7 +17,6 @@ class Settings(BaseSettings):
     supabase_url: str = Field(...)
     supabase_service_role_key: str = Field(...)
     default_discord_webhook_url: str = Field(...)
-    anthropic_api_key: str = Field(...)
     log_level: str = Field(default="INFO")
 
 

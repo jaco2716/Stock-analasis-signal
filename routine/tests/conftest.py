@@ -16,7 +16,6 @@ def _stub_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SUPABASE_URL", "https://stub.supabase.co")
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "stub-key")
     monkeypatch.setenv("DEFAULT_DISCORD_WEBHOOK_URL", "https://discord.test/webhooks/default")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-stub")
     monkeypatch.setenv("LOG_LEVEL", "INFO")
     # Force a fresh Settings on each test by clearing the lru_cache.
     from lib.config import get_settings

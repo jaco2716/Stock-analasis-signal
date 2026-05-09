@@ -8,7 +8,6 @@ from uuid import UUID
 SignalType = Literal["BUY", "SELL", "HOLD"]
 HoldingKind = Literal["owned", "watchlist"]
 RunStatus = Literal["running", "success", "partial", "failed"]
-Sentiment = Literal["BULLISH", "BEARISH", "NEUTRAL", "MIXED"]
 
 
 @dataclass(frozen=True)
@@ -40,13 +39,6 @@ class Indicators:
     macd: float | None
     macd_signal: float | None
     pct_change_30d: float | None
-
-
-@dataclass(frozen=True)
-class NewsDigest:
-    headlines: list[str]
-    summary: str
-    sentiment: Sentiment
 
 
 @dataclass

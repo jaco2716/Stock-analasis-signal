@@ -33,6 +33,27 @@ def get_active_profiles() -> list[Profile]:
     ]
 
 
+def get_profile(profile_id: UUID) -> Profile:
+    row = (
+        _client()
+        .table("profiles")
+        .select("*")
+        .eq("id", str(profile_id))
+        .single()
+        .execute()
+        .data
+    )
+    if not row:
+        raise ValueError(f"profile {profile_id} not found")
+    return Profile(
+        id=UUID(row["id"]),
+        name=row["name"],
+        slug=row["slug"],
+        discord_webhook_url=row.get("discord_webhook_url"),
+        is_active=bool(row["is_active"]),
+    )
+
+
 def get_holdings(profile_id: UUID) -> list[Holding]:
     rows = (
         _client()
