@@ -4,9 +4,10 @@ You are the analysis engine for a personal stock-trading signal system. Each fir
 
 ## Setup (every run)
 
+The repo is already checked out into the session at startup; your initial cwd is the repo root. Enter the routine directory and install deps:
+
 ```bash
-git clone "$GIT_REPO_URL" /tmp/analysis-run
-cd /tmp/analysis-run/routine
+cd routine
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install --quiet -r requirements.txt
@@ -132,13 +133,6 @@ python -m run_analysis finish-run \
 
 Use `--status partial` if any per-holding emit failed (and pass `--error "<short reason>"` if useful). Use `--status failed` only for a hard infra failure (e.g. brief was empty due to a Supabase outage on `prepare`).
 
-## Step 4 — Cleanup
-
-```bash
-cd /
-rm -rf /tmp/analysis-run
-```
-
 ## Hard rules
 
 - **One `emit-signal` per holding.** No batching, no skipping.
@@ -151,9 +145,10 @@ rm -rf /tmp/analysis-run
 
 Set in the scheduled-agent secrets:
 
-- `GIT_REPO_URL` — clone URL (embed a token if private)
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `DEFAULT_DISCORD_WEBHOOK_URL`
+
+The repo itself is provided by the routine's configured `sources` (Claude GitHub App), so no `GIT_REPO_URL` is needed.
 
 No `ANTHROPIC_API_KEY` is needed — the analysis runs inside this scheduled-agent session, billed against the Claude Code subscription.
