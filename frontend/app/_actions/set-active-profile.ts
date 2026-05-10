@@ -4,10 +4,12 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { getProfileBySlug } from "@/lib/api/profiles";
+import { requireAuth } from "@/lib/auth-server";
 import { ACTIVE_PROFILE_COOKIE } from "@/lib/constants";
 import { isValidSlug } from "@/lib/slug";
 
 export const setActiveProfileAction = async (slug: string): Promise<void> => {
+  await requireAuth();
   if (!isValidSlug(slug)) {
     redirect("/profiles");
   }

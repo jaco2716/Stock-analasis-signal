@@ -9,6 +9,7 @@ import {
   insertProfile,
   updateProfileById,
 } from "@/lib/api/profiles";
+import { requireAuth } from "@/lib/auth-server";
 import { isValidSlug } from "@/lib/slug";
 import type { ActionResult } from "@/lib/types";
 
@@ -36,6 +37,7 @@ export const createProfile = async (
   input: z.input<typeof profileSchema>,
 ): Promise<ActionResult> => {
   try {
+    await requireAuth();
     const parsed = profileSchema.parse(input);
     await insertProfile({
       name: parsed.name,
@@ -56,6 +58,7 @@ export const updateProfile = async (
   input: z.input<typeof profileSchema>,
 ): Promise<ActionResult> => {
   try {
+    await requireAuth();
     const existing = await getProfileById(id);
     if (!existing) return { ok: false, error: "Profile not found" };
     const parsed = profileSchema.parse(input);
@@ -79,6 +82,7 @@ export const updateProfile = async (
 
 export const deleteProfile = async (id: string): Promise<ActionResult> => {
   try {
+    await requireAuth();
     const existing = await getProfileById(id);
     await deleteProfileById(id);
     revalidatePath("/profiles");

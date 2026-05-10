@@ -8,6 +8,7 @@ import {
   insertHolding,
   updateHolding,
 } from "@/lib/api/portfolio";
+import { requireAuth } from "@/lib/auth-server";
 import type { ActionResult } from "@/lib/types";
 
 const tickerSchema = z
@@ -65,6 +66,7 @@ export const addHolding = async (
   input: z.input<typeof addHoldingSchema>,
 ): Promise<ActionResult> => {
   try {
+    await requireAuth();
     const parsed = addHoldingSchema.parse(input);
     const isOwned = parsed.kind === "owned";
     await insertHolding({
@@ -89,6 +91,7 @@ export const updateHoldingAction = async (
   input: z.input<typeof updateHoldingSchema>,
 ): Promise<ActionResult> => {
   try {
+    await requireAuth();
     const parsed = updateHoldingSchema.parse(input);
     await updateHolding(parsed.id, {
       quantity: parsed.quantity,
@@ -105,6 +108,7 @@ export const removeHolding = async (
   input: z.input<typeof removeHoldingSchema>,
 ): Promise<ActionResult> => {
   try {
+    await requireAuth();
     const parsed = removeHoldingSchema.parse(input);
     await deleteHolding(parsed.id);
     revalidatePath(`/p/${parsed.profileSlug}`, "page");

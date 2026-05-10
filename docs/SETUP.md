@@ -160,6 +160,8 @@ In **Settings -> Environment Variables** add (Production + Preview + Development
 | `NEXT_PUBLIC_SUPABASE_URL` | from 1.2 | exposed to browser |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | from 1.2 | exposed to browser |
 | `SUPABASE_SERVICE_ROLE_KEY` | from 1.2 | **server-only** - leave the "Available in browser" box unchecked |
+| `APP_PASSWORD` | shared password you'll type at `/login` | server-only; gates the entire dashboard |
+| `APP_SESSION_SECRET` | random ≥16 chars (`openssl rand -hex 32`) | server-only; HMAC key for the session cookie. Rotating it logs everyone out. |
 
 Click **Deploy**.
 
