@@ -41,6 +41,7 @@ class Indicators:
     macd: float | None
     macd_signal: float | None
     pct_change_30d: float | None
+    atr_14: float | None = None
 
 
 @dataclass
@@ -52,6 +53,17 @@ class Signal:
     profile_id: UUID | None = None
     run_id: UUID | None = None
     generated_at: datetime = field(default_factory=datetime.utcnow)
+
+
+@dataclass(frozen=True)
+class SignalRecord:
+    """Read shape for prior signals exposed to the agent via the brief."""
+
+    ticker: str
+    signal_type: SignalType
+    confidence: float
+    generated_at: datetime
+    run_id: UUID | None
 
 
 @dataclass(frozen=True)

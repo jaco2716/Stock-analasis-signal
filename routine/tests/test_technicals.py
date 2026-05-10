@@ -61,3 +61,33 @@ def test_compute_indicators_short_frame_no_sma200() -> None:
 def test_compute_indicators_rejects_empty() -> None:
     with pytest.raises(ValueError):
         compute_indicators(pd.DataFrame())
+
+
+def test_compute_indicators_atr_present_on_full_frame(fixtures_dir: Path) -> None:
+    df = _load(fixtures_dir)
+    ind = compute_indicators(df)
+    assert ind.atr_14 is not None
+    assert ind.atr_14 > 0
+
+
+def test_compute_indicators_atr_none_when_no_high_low() -> None:
+    closes = [100.0 + (i % 7) for i in range(40)]
+    df = pd.DataFrame({"Close": closes})
+    ind = compute_indicators(df)
+    assert ind.atr_14 is None
+
+
+def test_compute_indicators_atr_matches_hand_calc() -> None:
+    # Constant 1.0 true-range rows -> ATR(14) converges to 1.0.
+    rows = 40
+    df = pd.DataFrame(
+        {
+            "Open": [100.0] * rows,
+            "High": [100.5] * rows,
+            "Low": [99.5] * rows,
+            "Close": [100.0] * rows,
+            "Volume": [1_000_000] * rows,
+        }
+    )
+    ind = compute_indicators(df)
+    assert ind.atr_14 == pytest.approx(1.0, abs=1e-3)

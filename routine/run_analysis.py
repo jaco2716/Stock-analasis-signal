@@ -202,15 +202,33 @@ def cmd_prepare(args: argparse.Namespace) -> int:
         if args.ticker:
             holdings = [h for h in holdings if h.ticker == args.ticker]
 
+        signal_history_by_ticker: dict = {}
+        if holdings and not args.dry_run:
+            try:
+                signal_history_by_ticker = supabase_client.get_recent_signals_for_holdings(
+                    profile.id, [h.ticker for h in holdings]
+                )
+            except Exception:
+                log.exception("failed to load signal history for profile %s", profile.slug)
+
         holding_sections: list[dict] = []
         for holding in holdings:
             try:
-                prices = market_data.get_price_history(holding.ticker, period="6mo")
+                prices = market_data.get_price_history(holding.ticker, period="2y")
                 if prices is None or prices.empty:
                     log.warning("skipping %s: no price data", holding.ticker)
                     continue
                 indicators = technicals.compute_indicators(prices)
-                holding_sections.append(brief.build_holding_section(holding, prices, indicators))
+                last_earnings = market_data.get_last_earnings_date(holding.ticker)
+                holding_sections.append(
+                    brief.build_holding_section(
+                        holding,
+                        prices,
+                        indicators,
+                        last_earnings_date=last_earnings,
+                        signal_history=signal_history_by_ticker.get(holding.ticker),
+                    )
+                )
             except Exception:
                 log.exception("failed to gather %s/%s", profile.slug, holding.ticker)
 

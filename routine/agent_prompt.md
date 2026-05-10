@@ -56,12 +56,27 @@ Combine the brief's indicators with the news. Use these heuristics:
 - **Golden cross** (`sma_50 > sma_200`): bullish trend regime. **Death cross** (`sma_50 < sma_200`): bearish.
 - **30d price change** (`price_change_30d_pct`): momentum context. A +20% in 30d on already-overbought RSI is a different story than +20% from oversold.
 - **Price vs SMAs**: above all three SMAs = strong uptrend; below all three = downtrend; between = chop.
+- **ATR(14) / `atr_pct_of_price`**: scale of a "normal" daily move. A +5% day on `atr_pct_of_price=1.0` is a 5σ event; on `4.0` it's barely 1σ. Use to size how meaningful a recent % move is before treating it as a signal.
+- **52-week distance** (`pct_below_52w_high`, `pct_above_52w_low`): near the high = breakout/extension territory; near the low = potential support or value-trap. A BUY at `pct_below_52w_high < -25%` is "buy the dip"; a BUY at ~0% is "buy the breakout" — different conviction profiles.
+- **Volume context** (`volume_vs_avg_x`): `>1.5` = high-conviction move (real money behind it). `<0.7` = low-volume drift (discount the move). A breakout on `0.5x` volume is suspect; a breakdown on `2.0x` volume is meaningful.
 
 **News**
 
 - Last 14 days only. Older items are background noise; technicals subsume them.
 - Specific catalysts (earnings beat, regulatory approval, downgrade) shift confidence more than "analyst sentiment" pieces.
 - Conflicting news + mixed indicators ⇒ default to HOLD.
+
+**Earnings recency** (`days_since_earnings`)
+
+- `< 14` days: recent print — explains the current technical pattern. Cite the print in your reasoning.
+- `> 60` days and a forward print is suspected: pre-earnings calendar risk. Lower confidence on directional calls.
+- `null`: yfinance had no data for this ticker (common for non-US listings). Don't assume "no earnings" — just lacking data.
+
+**Prior signals** (`signal_history`, last 5 newest-first)
+
+- Avoid whipsaw: if the last 3 entries are all `HOLD` and nothing material changed, the simplest answer is another `HOLD`.
+- A flip across runs (e.g. `BUY` two runs ago, now considering `SELL`) needs an explicit catalyst in the news or a sharp technical break — call it out in the reasoning.
+- High-confidence prior calls deserve more inertia than low-confidence ones.
 
 ### 2c. Decide
 

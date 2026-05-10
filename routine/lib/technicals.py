@@ -33,6 +33,23 @@ def _last_or_none(s: pd.Series) -> float | None:
     return float(v)
 
 
+def _atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    high = df["High"].astype(float)
+    low = df["Low"].astype(float)
+    close = df["Close"].astype(float)
+    prev_close = close.shift(1)
+    tr = pd.concat(
+        [
+            (high - low).abs(),
+            (high - prev_close).abs(),
+            (low - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+    # alpha=1/period reproduces Wilder's ATR smoothing.
+    return tr.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+
+
 def compute_indicators(df: pd.DataFrame) -> Indicators:
     if df is None or df.empty or "Close" not in df.columns:
         raise ValueError("compute_indicators requires a non-empty frame with a 'Close' column")
@@ -43,6 +60,10 @@ def compute_indicators(df: pd.DataFrame) -> Indicators:
     sma_50 = close.rolling(50).mean()
     sma_200 = close.rolling(200).mean()
     macd, macd_sig = _macd(close)
+
+    atr_14: float | None = None
+    if {"High", "Low"}.issubset(df.columns):
+        atr_14 = _last_or_none(_atr(df, 14))
 
     pct_30d: float | None = None
     if len(close) >= 31:
@@ -60,4 +81,5 @@ def compute_indicators(df: pd.DataFrame) -> Indicators:
         macd=_last_or_none(macd),
         macd_signal=_last_or_none(macd_sig),
         pct_change_30d=pct_30d,
+        atr_14=atr_14,
     )

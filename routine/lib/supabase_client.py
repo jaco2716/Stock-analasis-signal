@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 from supabase import Client, create_client
 
 from .config import get_settings
-from .models import Holding, Profile, RunStatus, Signal
+from .models import Holding, Profile, RunStatus, Signal, SignalRecord
 
 log = logging.getLogger(__name__)
 
@@ -113,6 +113,47 @@ def finish_run(
             "error_message": error,
         }
     ).eq("id", str(run_id)).execute()
+
+
+def get_recent_signals_for_holdings(
+    profile_id: UUID,
+    tickers: list[str],
+    per_ticker_limit: int = 5,
+) -> dict[str, list[SignalRecord]]:
+    """Newest-first signal history per ticker for the given profile.
+
+    One round-trip; we slice to per_ticker_limit per ticker in Python.
+    """
+    if not tickers:
+        return {}
+    rows = (
+        _client()
+        .table("signals")
+        .select("ticker, signal_type, confidence, generated_at, run_id")
+        .eq("profile_id", str(profile_id))
+        .in_("ticker", tickers)
+        .order("generated_at", desc=True)
+        .limit(per_ticker_limit * len(tickers))
+        .execute()
+        .data
+        or []
+    )
+    grouped: dict[str, list[SignalRecord]] = {t: [] for t in tickers}
+    for r in rows:
+        ticker = r["ticker"]
+        bucket = grouped.setdefault(ticker, [])
+        if len(bucket) >= per_ticker_limit:
+            continue
+        bucket.append(
+            SignalRecord(
+                ticker=ticker,
+                signal_type=r["signal_type"],
+                confidence=float(r["confidence"]),
+                generated_at=datetime.fromisoformat(r["generated_at"].replace("Z", "+00:00")),
+                run_id=UUID(r["run_id"]) if r.get("run_id") else None,
+            )
+        )
+    return grouped
 
 
 def insert_signal(signal: Signal) -> None:
