@@ -1,7 +1,7 @@
 """Typed wrappers for all Supabase reads/writes used by the routine."""
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from uuid import UUID, uuid4
 
@@ -115,6 +115,27 @@ def finish_run(
     ).eq("id", str(run_id)).execute()
 
 
+_SIGNAL_SELECT = (
+    "id, ticker, signal_type, confidence, generated_at, run_id, "
+    "outcome_t5_pct, outcome_t30_pct"
+)
+
+
+def _parse_signal_row(r: dict) -> SignalRecord:
+    return SignalRecord(
+        id=UUID(r["id"]) if r.get("id") else None,
+        ticker=r["ticker"],
+        signal_type=r["signal_type"],
+        confidence=float(r["confidence"]),
+        generated_at=datetime.fromisoformat(r["generated_at"].replace("Z", "+00:00")),
+        run_id=UUID(r["run_id"]) if r.get("run_id") else None,
+        outcome_t5_pct=float(r["outcome_t5_pct"]) if r.get("outcome_t5_pct") is not None else None,
+        outcome_t30_pct=(
+            float(r["outcome_t30_pct"]) if r.get("outcome_t30_pct") is not None else None
+        ),
+    )
+
+
 def get_recent_signals_for_holdings(
     profile_id: UUID,
     tickers: list[str],
@@ -129,7 +150,7 @@ def get_recent_signals_for_holdings(
     rows = (
         _client()
         .table("signals")
-        .select("ticker, signal_type, confidence, generated_at, run_id")
+        .select(_SIGNAL_SELECT)
         .eq("profile_id", str(profile_id))
         .in_("ticker", tickers)
         .order("generated_at", desc=True)
@@ -144,16 +165,41 @@ def get_recent_signals_for_holdings(
         bucket = grouped.setdefault(ticker, [])
         if len(bucket) >= per_ticker_limit:
             continue
-        bucket.append(
-            SignalRecord(
-                ticker=ticker,
-                signal_type=r["signal_type"],
-                confidence=float(r["confidence"]),
-                generated_at=datetime.fromisoformat(r["generated_at"].replace("Z", "+00:00")),
-                run_id=UUID(r["run_id"]) if r.get("run_id") else None,
-            )
-        )
+        bucket.append(_parse_signal_row(r))
     return grouped
+
+
+def get_signals_needing_outcome(window_days: int, batch: int = 200) -> list[SignalRecord]:
+    """Signals older than `window_days` whose T+window outcome is not yet computed."""
+    if window_days not in (5, 30):
+        raise ValueError(f"window_days must be 5 or 30, got {window_days}")
+    column = f"outcome_t{window_days}_pct"
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=window_days)).isoformat()
+    rows = (
+        _client()
+        .table("signals")
+        .select(_SIGNAL_SELECT)
+        .is_(column, "null")
+        .lt("generated_at", cutoff)
+        .order("generated_at", desc=False)
+        .limit(batch)
+        .execute()
+        .data
+        or []
+    )
+    return [_parse_signal_row(r) for r in rows]
+
+
+def update_signal_outcome(signal_id: UUID, window_days: int, outcome_pct: float) -> None:
+    if window_days not in (5, 30):
+        raise ValueError(f"window_days must be 5 or 30, got {window_days}")
+    column = f"outcome_t{window_days}_pct"
+    _client().table("signals").update(
+        {
+            column: round(float(outcome_pct), 2),
+            "outcome_computed_at": datetime.now(timezone.utc).isoformat(),
+        }
+    ).eq("id", str(signal_id)).execute()
 
 
 def insert_signal(signal: Signal) -> None:

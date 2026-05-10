@@ -5,7 +5,7 @@ import json
 import logging
 import sys
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -88,6 +88,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fin.add_argument("--dry-run", action="store_true", help="No Supabase write.")
     fin.add_argument("--verbose", action="store_true", help="DEBUG logging.")
+
+    score = sub.add_parser(
+        "score-signals",
+        help="Backfill realised T+5 / T+30 returns onto past signals (separate cron task).",
+    )
+    score.add_argument(
+        "--window",
+        choices=("5", "30", "both"),
+        default="both",
+        help="Which outcome window(s) to score (default: both).",
+    )
+    score.add_argument("--batch", type=int, default=200, help="Max signals per window per run.")
+    score.add_argument("--dry-run", action="store_true", help="No Supabase update.")
+    score.add_argument("--verbose", action="store_true", help="DEBUG logging.")
 
     return p
 
@@ -197,6 +211,7 @@ def cmd_prepare(args: argparse.Namespace) -> int:
     run_id: UUID = uuid4() if args.dry_run else supabase_client.start_run()
 
     profile_sections: list[dict] = []
+    today = datetime.now(timezone.utc).date()
     for profile in profiles:
         holdings = supabase_client.get_holdings(profile.id)
         if args.ticker:
@@ -211,6 +226,19 @@ def cmd_prepare(args: argparse.Namespace) -> int:
             except Exception:
                 log.exception("failed to load signal history for profile %s", profile.slug)
 
+        # Per-profile portfolio totals — built from cost basis up front, current value
+        # filled in as we compute current_price for each holding.
+        portfolio_totals: dict[str, dict] = {}
+        for h in holdings:
+            cur = (h.currency or "DKK").upper()
+            bucket = portfolio_totals.setdefault(
+                cur,
+                {"total_cost_basis": 0.0, "total_current_value": 0.0, "holding_count": 0},
+            )
+            if h.quantity is not None and h.avg_buy_price is not None:
+                bucket["total_cost_basis"] += float(h.quantity) * float(h.avg_buy_price)
+            bucket["holding_count"] += 1
+
         holding_sections: list[dict] = []
         for holding in holdings:
             try:
@@ -219,10 +247,41 @@ def cmd_prepare(args: argparse.Namespace) -> int:
                     log.warning("skipping %s: no price data", holding.ticker)
                     continue
                 indicators = technicals.compute_indicators(prices)
+                current_price = float(prices["Close"].astype(float).iloc[-1])
+                currency = (holding.currency or "DKK").upper()
+
+                # Update current value running total for this currency.
+                if holding.quantity is not None:
+                    portfolio_totals.setdefault(
+                        currency,
+                        {"total_cost_basis": 0.0, "total_current_value": 0.0, "holding_count": 0},
+                    )["total_current_value"] += float(holding.quantity) * current_price
 
                 cal = market_data.get_earnings_calendar(holding.ticker)
                 realtime = market_data.get_realtime_quote(holding.ticker)
                 analyst = market_data.get_analyst_consensus(holding.ticker)
+                fundamentals = market_data.get_fundamentals(holding.ticker)
+                insider = market_data.get_insider_activity(holding.ticker)
+
+                implied_move = None
+                if cal.next_future is not None:
+                    days_until = (cal.next_future.date() - today).days
+                    if 0 <= days_until <= 14:
+                        implied_move = market_data.get_earnings_implied_move(
+                            holding.ticker, current_price, cal.next_future
+                        )
+
+                cost_basis = (
+                    float(holding.quantity) * float(holding.avg_buy_price)
+                    if holding.quantity is not None and holding.avg_buy_price is not None
+                    else None
+                )
+                cur_total = portfolio_totals.get(currency, {}).get("total_cost_basis", 0.0)
+                position_weight_pct = (
+                    cost_basis / cur_total * 100.0
+                    if cost_basis is not None and cur_total > 0
+                    else None
+                )
 
                 baseline_idx = market_data.get_index_for_ticker(holding.ticker)
                 baseline_prices = market_data.get_price_history(baseline_idx, period="2y")
@@ -253,13 +312,30 @@ def cmd_prepare(args: argparse.Namespace) -> int:
                         realtime=realtime,
                         analyst=analyst,
                         relative_strength=relative_strength,
+                        fundamentals=fundamentals,
+                        insider=insider,
+                        implied_move=implied_move,
+                        position_weight_pct=position_weight_pct,
                     )
                 )
             except Exception:
                 log.exception("failed to gather %s/%s", profile.slug, holding.ticker)
 
+        # Round the running totals before emitting; FX rates per profile.
+        for bucket in portfolio_totals.values():
+            bucket["total_cost_basis"] = round(bucket["total_cost_basis"], 2)
+            bucket["total_current_value"] = round(bucket["total_current_value"], 2)
+        fx_rates = market_data.get_fx_rates({h.currency for h in holdings if h.currency}, home="USD")
+
         if holding_sections:
-            profile_sections.append(brief.build_profile_section(profile, holding_sections))
+            profile_sections.append(
+                brief.build_profile_section(
+                    profile,
+                    holding_sections,
+                    portfolio_totals=portfolio_totals,
+                    fx_rates=fx_rates,
+                )
+            )
 
     payload = brief.build_brief(run_id, started_at, profile_sections)
 
@@ -400,10 +476,82 @@ def cmd_finish_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _score_one_window(window_days: int, batch: int, dry_run: bool) -> tuple[int, int]:
+    """Returns (scored, skipped). Skipped = no price coverage on either anchor."""
+    pending = supabase_client.get_signals_needing_outcome(window_days, batch=batch)
+    if not pending:
+        log.info("score-signals: no pending signals for T+%d", window_days)
+        return 0, 0
+
+    by_ticker: dict[str, list] = {}
+    for sig in pending:
+        by_ticker.setdefault(sig.ticker, []).append(sig)
+
+    scored = skipped = 0
+    for ticker, sigs in by_ticker.items():
+        prices = market_data.get_price_history(ticker, period="2y")
+        if prices is None or prices.empty or "Close" not in prices.columns:
+            log.warning("score-signals: no price history for %s; skipping %d signals", ticker, len(sigs))
+            skipped += len(sigs)
+            continue
+        closes = prices["Close"].astype(float)
+        idx = prices.index
+        # idx may be tz-naive (yfinance often emits naive UTC daily bars).
+        if getattr(idx, "tz", None) is None:
+            idx = idx.tz_localize("UTC")
+        for sig in sigs:
+            if sig.id is None:
+                skipped += 1
+                continue
+            anchor_a = sig.generated_at
+            anchor_b = sig.generated_at + timedelta(days=window_days)
+            try:
+                pos_a = idx.searchsorted(anchor_a, side="left")
+                pos_b = idx.searchsorted(anchor_b, side="left")
+            except Exception:
+                skipped += 1
+                continue
+            if pos_a >= len(closes) or pos_b >= len(closes):
+                # Not yet enough trading days past the second anchor.
+                skipped += 1
+                continue
+            price_a = float(closes.iloc[pos_a])
+            price_b = float(closes.iloc[pos_b])
+            if not price_a:
+                skipped += 1
+                continue
+            outcome_pct = (price_b - price_a) / price_a * 100.0
+            if dry_run:
+                log.info(
+                    "[dry-run] would set signal %s outcome_t%d_pct = %.2f",
+                    sig.id,
+                    window_days,
+                    outcome_pct,
+                )
+            else:
+                supabase_client.update_signal_outcome(sig.id, window_days, outcome_pct)
+            scored += 1
+    return scored, skipped
+
+
+def cmd_score_signals(args: argparse.Namespace) -> int:
+    market_data.clear_cache()
+    windows: list[int] = [5, 30] if args.window == "both" else [int(args.window)]
+    total_scored = total_skipped = 0
+    for w in windows:
+        scored, skipped = _score_one_window(w, args.batch, args.dry_run)
+        log.info("score-signals: T+%d scored=%d skipped=%d", w, scored, skipped)
+        total_scored += scored
+        total_skipped += skipped
+    log.info("score-signals done: scored=%d skipped=%d", total_scored, total_skipped)
+    return 0
+
+
 _DISPATCH = {
     "prepare": cmd_prepare,
     "emit-signal": cmd_emit_signal,
     "finish-run": cmd_finish_run,
+    "score-signals": cmd_score_signals,
 }
 
 

@@ -9,8 +9,11 @@ import pandas as pd
 
 from .models import (
     AnalystConsensus,
+    EarningsImpliedMove,
+    Fundamentals,
     Holding,
     Indicators,
+    InsiderActivity,
     Profile,
     RealtimeQuote,
     SignalRecord,
@@ -88,14 +91,71 @@ def _volume_context(prices: pd.DataFrame) -> dict[str, float | None]:
 def _serialize_signal_history(history: list[SignalRecord] | None) -> list[dict[str, Any]]:
     if not history:
         return []
-    return [
-        {
+    out: list[dict[str, Any]] = []
+    for h in history:
+        item: dict[str, Any] = {
             "generated_at": h.generated_at.astimezone(timezone.utc).isoformat(),
             "signal_type": h.signal_type,
             "confidence": float(h.confidence),
         }
-        for h in history
-    ]
+        if h.outcome_t5_pct is not None:
+            item["outcome_t5_pct"] = float(h.outcome_t5_pct)
+        if h.outcome_t30_pct is not None:
+            item["outcome_t30_pct"] = float(h.outcome_t30_pct)
+        out.append(item)
+    return out
+
+
+_FUNDAMENTAL_NULL: dict[str, Any] = {
+    "trailing_pe": None,
+    "forward_pe": None,
+    "peg_ratio": None,
+    "price_to_book": None,
+    "ev_to_ebitda": None,
+    "dividend_yield_pct": None,
+    "market_cap": None,
+    "debt_to_equity": None,
+    "profit_margin_pct": None,
+    "roe_pct": None,
+    "fcf_yield_pct": None,
+}
+
+_INSIDER_NULL: dict[str, Any] = {
+    "net_dollars_90d": None,
+    "buy_count_90d": None,
+    "sell_count_90d": None,
+    "net_share_pct": None,
+}
+
+_IMPLIED_MOVE_NULL: dict[str, Any] = {
+    "implied_move_pct": None,
+    "expiration_date": None,
+    "atm_call_iv": None,
+    "atm_put_iv": None,
+}
+
+
+def _fundamentals_block(f: Fundamentals | None) -> dict[str, Any]:
+    if f is None:
+        return dict(_FUNDAMENTAL_NULL)
+    return {k: getattr(f, k) for k in _FUNDAMENTAL_NULL}
+
+
+def _insider_block(i: InsiderActivity | None) -> dict[str, Any]:
+    if i is None:
+        return dict(_INSIDER_NULL)
+    return {k: getattr(i, k) for k in _INSIDER_NULL}
+
+
+def _implied_move_block(m: EarningsImpliedMove | None) -> dict[str, Any]:
+    if m is None:
+        return dict(_IMPLIED_MOVE_NULL)
+    return {
+        "implied_move_pct": m.implied_move_pct,
+        "expiration_date": m.expiration_date.isoformat() if m.expiration_date else None,
+        "atm_call_iv": m.atm_call_iv,
+        "atm_put_iv": m.atm_put_iv,
+    }
 
 
 def _realtime_fields(rt: RealtimeQuote | None) -> dict[str, Any]:
@@ -209,6 +269,10 @@ def build_holding_section(
     realtime: RealtimeQuote | None = None,
     analyst: AnalystConsensus | None = None,
     relative_strength: dict | None = None,
+    fundamentals: Fundamentals | None = None,
+    insider: InsiderActivity | None = None,
+    implied_move: EarningsImpliedMove | None = None,
+    position_weight_pct: float | None = None,
 ) -> dict[str, Any]:
     closes = prices["Close"].astype(float).tail(_RECENT_CLOSES).tolist()
     current_price = float(prices["Close"].astype(float).iloc[-1])
@@ -248,6 +312,12 @@ def build_holding_section(
         **_realtime_fields(realtime),
         **_analyst_fields(analyst, current_price),
         **_relative_strength_fields(relative_strength),
+        "fundamentals": _fundamentals_block(fundamentals),
+        "insider": _insider_block(insider),
+        "earnings_implied_move": _implied_move_block(implied_move),
+        "position_weight_pct": (
+            round(position_weight_pct, 2) if position_weight_pct is not None else None
+        ),
     }
     return section
 
@@ -264,11 +334,18 @@ def build_brief(
     }
 
 
-def build_profile_section(profile: Profile, holdings: list[dict[str, Any]]) -> dict[str, Any]:
+def build_profile_section(
+    profile: Profile,
+    holdings: list[dict[str, Any]],
+    portfolio_totals: dict[str, dict[str, Any]] | None = None,
+    fx_rates: dict[str, float | None] | None = None,
+) -> dict[str, Any]:
     return {
         "id": str(profile.id),
         "slug": profile.slug,
         "name": profile.name,
         "discord_webhook_url": profile.discord_webhook_url,
         "holdings": holdings,
+        "portfolio_totals": portfolio_totals or {},
+        "fx_rates": fx_rates or {},
     }

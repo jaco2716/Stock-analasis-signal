@@ -32,7 +32,16 @@ python -m run_analysis emit-signal \
 python -m run_analysis finish-run \
   --run-id <uuid> --status success|partial|failed \
   [--profile-count N] [--signal-count N] [--error "..."] [--dry-run]
+
+# 4. (Separate cron task) Backfill realised T+5 / T+30 returns onto past signals.
+python -m run_analysis score-signals [--window 5|30|both] [--batch 200] [--dry-run]
 ```
+
+Run `score-signals` daily after market close (suggested cron: 22:00 UTC) on its own
+schedule — it does not depend on `prepare`. The job updates the `outcome_t5_pct` /
+`outcome_t30_pct` columns added in migration `db/migrations/0006_signal_outcomes.sql`,
+and those values are then surfaced to the agent through `signal_history` in the next
+brief.
 
 `--dry-run` skips Supabase writes and Discord posts everywhere; `prepare` still writes the brief file (the agent and downstream subcommands need it).
 

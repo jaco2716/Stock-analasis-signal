@@ -96,6 +96,43 @@ Combine the brief's indicators with the news. Use these heuristics:
 - Negative on a constructive technical setup ⇒ the bullish read is mostly **beta** (the whole index moved). Downgrade confidence.
 - A US ticker is benchmarked against `^GSPC`; a `.CO` ticker against `^OMXC25`, etc. Cite the baseline you're using.
 
+**Fundamentals** (`fundamentals.*`)
+
+- `trailing_pe < 15` and `forward_pe < trailing_pe`: value setup; pairs well with bullish technicals.
+- `peg_ratio < 1.0`: growth at a reasonable price.
+- `debt_to_equity > 200`: balance-sheet red flag — lean toward SELL on weakness, avoid BUY-the-dip.
+- `fcf_yield_pct > 5`: quality-on-sale signal (real cash flow relative to market cap).
+- All-null block = yfinance had no fundamentals data (common for non-US listings or ETFs).
+
+**Insider activity** (`insider.*`, last 90 days)
+
+- Net positive `net_dollars_90d` with low `sell_count_90d`: insiders are conviction buyers; supportive of BUY.
+- Cluster of sells (high `sell_count_90d`, deeply negative `net_dollars_90d`): supportive of SELL even on neutral technicals.
+- Null block = yfinance had no insider data (very common for non-US tickers).
+
+**Implied earnings move** (`earnings_implied_move.*`)
+
+- Present only when `days_until_earnings ≤ 14`.
+- The market is *already* pricing a move of `implied_move_pct`; a directional call needs to outpace this to be profitable on average. Size confidence accordingly.
+- High `atm_call_iv` / `atm_put_iv` (>60): unusually wide pricing range — Street sees catalyst risk both ways. Default toward HOLD.
+
+**Position weight** (`position_weight_pct`)
+
+- This is `cost_basis / total_cost_basis_in_same_currency × 100` — use it directly when the rules say "small position relative to rest of profile."
+- `< 5%` = small (room to add on bullish signal); `> 25%` = concentrated (resist adding even on bullish signal — diversification cost).
+- Cross-currency comparison still forbidden: only compare within the same currency bucket.
+
+**Signal outcomes** (`signal_history[].outcome_t5_pct`, `outcome_t30_pct`)
+
+- When present, calibrate yourself: a string of high-confidence calls with negative outcomes ⇒ that rule is mis-firing for this ticker; soften this run's confidence.
+- Persistently positive outcomes after BUYs ⇒ trust your bullish setups more for this ticker.
+- Outcomes are realised stock returns (T+5 / T+30 close vs. signal-day close); compare them to your own `confidence` to spot calibration drift.
+
+**Portfolio totals + FX rates** (profile-level: `portfolio_totals`, `fx_rates`)
+
+- `portfolio_totals[<currency>]` carries `total_cost_basis`, `total_current_value`, and `holding_count` per currency. Use these when commenting on the profile (not when deciding a specific signal).
+- `fx_rates` (e.g. `"DKK_USD": 0.146`) lets you produce a one-currency portfolio summary if asked. **Per-holding decisions still must not mix currencies.**
+
 **Prior signals** (`signal_history`, last 5 newest-first)
 
 - Avoid whipsaw: if the last 3 entries are all `HOLD` and nothing material changed, the simplest answer is another `HOLD`.

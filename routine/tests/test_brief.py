@@ -9,8 +9,11 @@ import pytest
 from lib import brief
 from lib.models import (
     AnalystConsensus,
+    EarningsImpliedMove,
+    Fundamentals,
     Holding,
     Indicators,
+    InsiderActivity,
     RealtimeQuote,
     SignalRecord,
 )
@@ -244,3 +247,121 @@ def test_next_earnings_date_in_past_yields_null_days_until() -> None:
         _holding(), _prices(), _indicators(), next_earnings_date=past
     )
     assert section["days_until_earnings"] is None
+
+
+# --------------------------- Tier-3 fields --------------------------------
+
+
+def _funda() -> Fundamentals:
+    return Fundamentals(
+        trailing_pe=18.0,
+        forward_pe=16.0,
+        peg_ratio=0.9,
+        price_to_book=4.5,
+        ev_to_ebitda=12.0,
+        dividend_yield_pct=2.0,
+        market_cap=1e9,
+        debt_to_equity=70.0,
+        profit_margin_pct=18.0,
+        roe_pct=22.0,
+        fcf_yield_pct=5.5,
+    )
+
+
+def test_fundamentals_block_populated() -> None:
+    section = brief.build_holding_section(
+        _holding(), _prices(), _indicators(), fundamentals=_funda()
+    )
+    f = section["fundamentals"]
+    assert f["trailing_pe"] == 18.0
+    assert f["fcf_yield_pct"] == 5.5
+    assert f["dividend_yield_pct"] == 2.0
+
+
+def test_fundamentals_block_defaults_to_nulls() -> None:
+    section = brief.build_holding_section(_holding(), _prices(), _indicators())
+    f = section["fundamentals"]
+    assert all(f[k] is None for k in f)
+
+
+def test_insider_block_populated() -> None:
+    insider = InsiderActivity(
+        net_dollars_90d=120_000.0, buy_count_90d=2, sell_count_90d=1, net_share_pct=0.12
+    )
+    section = brief.build_holding_section(
+        _holding(), _prices(), _indicators(), insider=insider
+    )
+    i = section["insider"]
+    assert i["net_dollars_90d"] == 120_000.0
+    assert i["buy_count_90d"] == 2
+    assert i["sell_count_90d"] == 1
+
+
+def test_implied_move_block_serialises_date() -> None:
+    from datetime import date as _date
+
+    move = EarningsImpliedMove(
+        implied_move_pct=4.8,
+        expiration_date=_date(2026, 5, 22),
+        atm_call_iv=50.0,
+        atm_put_iv=52.0,
+    )
+    section = brief.build_holding_section(
+        _holding(), _prices(), _indicators(), implied_move=move
+    )
+    m = section["earnings_implied_move"]
+    assert m["implied_move_pct"] == 4.8
+    assert m["expiration_date"] == "2026-05-22"
+    assert m["atm_call_iv"] == 50.0
+
+
+def test_position_weight_pct_round_trip() -> None:
+    section = brief.build_holding_section(
+        _holding(), _prices(), _indicators(), position_weight_pct=12.345
+    )
+    assert section["position_weight_pct"] == 12.34 or section["position_weight_pct"] == 12.35
+
+
+def test_signal_history_outcomes_passthrough() -> None:
+    now = datetime.now(timezone.utc)
+    history = [
+        SignalRecord(
+            ticker="ABC",
+            signal_type="BUY",
+            confidence=0.8,
+            generated_at=now - timedelta(days=10),
+            run_id=uuid4(),
+            outcome_t5_pct=2.5,
+            outcome_t30_pct=None,
+        ),
+        SignalRecord(
+            ticker="ABC",
+            signal_type="HOLD",
+            confidence=0.5,
+            generated_at=now - timedelta(days=2),
+            run_id=uuid4(),
+        ),
+    ]
+    section = brief.build_holding_section(
+        _holding(), _prices(), _indicators(), signal_history=history
+    )
+    assert section["signal_history"][0]["outcome_t5_pct"] == 2.5
+    # Newer entry has no outcomes yet, so the keys are absent.
+    assert "outcome_t5_pct" not in section["signal_history"][1]
+
+
+def test_profile_section_carries_totals_and_fx() -> None:
+    from lib.models import Profile
+
+    prof = Profile(
+        id=UUID("11111111-1111-1111-1111-111111111111"),
+        name="Default",
+        slug="default",
+        discord_webhook_url=None,
+        is_active=True,
+    )
+    totals = {"USD": {"total_cost_basis": 5000.0, "total_current_value": 6000.0, "holding_count": 3}}
+    fx = {"DKK_USD": 0.146}
+    out = brief.build_profile_section(prof, [], portfolio_totals=totals, fx_rates=fx)
+    assert out["portfolio_totals"]["USD"]["holding_count"] == 3
+    assert out["fx_rates"]["DKK_USD"] == 0.146

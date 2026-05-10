@@ -1,7 +1,7 @@
 """Domain dataclasses mirroring the Supabase schema and run-time DTOs."""
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
@@ -64,6 +64,9 @@ class SignalRecord:
     confidence: float
     generated_at: datetime
     run_id: UUID | None
+    id: UUID | None = None
+    outcome_t5_pct: float | None = None
+    outcome_t30_pct: float | None = None
 
 
 @dataclass(frozen=True)
@@ -90,6 +93,37 @@ class AnalystConsensus:
 class EarningsCalendar:
     last_past: datetime | None
     next_future: datetime | None
+
+
+@dataclass(frozen=True)
+class Fundamentals:
+    trailing_pe: float | None
+    forward_pe: float | None
+    peg_ratio: float | None
+    price_to_book: float | None
+    ev_to_ebitda: float | None
+    dividend_yield_pct: float | None
+    market_cap: float | None
+    debt_to_equity: float | None
+    profit_margin_pct: float | None
+    roe_pct: float | None
+    fcf_yield_pct: float | None
+
+
+@dataclass(frozen=True)
+class InsiderActivity:
+    net_dollars_90d: float | None
+    buy_count_90d: int | None
+    sell_count_90d: int | None
+    net_share_pct: float | None
+
+
+@dataclass(frozen=True)
+class EarningsImpliedMove:
+    implied_move_pct: float | None
+    expiration_date: date | None
+    atm_call_iv: float | None
+    atm_put_iv: float | None
 
 
 @dataclass(frozen=True)

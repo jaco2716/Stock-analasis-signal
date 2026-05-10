@@ -1,5 +1,6 @@
 """yfinance helpers — earnings calendar, realtime quote, analyst consensus, suffix map."""
 
+from datetime import datetime, timezone
 from typing import Any
 
 import pandas as pd
@@ -20,11 +21,17 @@ class _FakeTicker:
         earnings_frame: pd.DataFrame | None = None,
         info: dict | None = None,
         fast_info: _FakeFastInfo | None = None,
+        insider_frame: pd.DataFrame | None = None,
+        options: tuple[str, ...] = (),
+        option_chains: dict | None = None,
         raises: Exception | None = None,
     ) -> None:
         self._frame = earnings_frame
         self._info = info if info is not None else {}
         self._fast_info = fast_info
+        self._insider = insider_frame
+        self._options = options
+        self._chains = option_chains or {}
         self._raises = raises
 
     @property
@@ -42,6 +49,19 @@ class _FakeTicker:
     @property
     def fast_info(self) -> _FakeFastInfo | None:
         return self._fast_info
+
+    @property
+    def insider_transactions(self) -> pd.DataFrame | None:
+        if self._raises:
+            raise self._raises
+        return self._insider
+
+    @property
+    def options(self) -> tuple[str, ...]:
+        return self._options
+
+    def option_chain(self, exp: str):
+        return self._chains[exp]
 
 
 def _earnings_frame(timestamps: list[pd.Timestamp]) -> pd.DataFrame:
@@ -252,3 +272,189 @@ def test_clear_cache_clears_all_caches(monkeypatch: pytest.MonkeyPatch) -> None:
     market_data.clear_cache()
     assert "ABC" not in market_data._EARNINGS_CAL_CACHE
     assert "ABC" not in market_data._INFO_CACHE
+
+
+# ----------------------------- fundamentals --------------------------------
+
+
+def test_get_fundamentals_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    market_data.clear_cache()
+    info = {
+        "trailingPE": 18.4,
+        "forwardPE": 16.2,
+        "pegRatio": 0.85,
+        "priceToBook": 4.2,
+        "enterpriseToEbitda": 12.1,
+        "dividendYield": 0.021,        # 2.1%
+        "marketCap": 1_000_000_000.0,
+        "debtToEquity": 75.0,
+        "profitMargins": 0.18,         # 18%
+        "returnOnEquity": 0.22,        # 22%
+        "freeCashflow": 60_000_000.0,
+    }
+    monkeypatch.setattr(market_data.yf, "Ticker", lambda t: _FakeTicker(info=info))
+
+    f = market_data.get_fundamentals("NFLX")
+    assert f is not None
+    assert f.trailing_pe == 18.4
+    assert f.peg_ratio == 0.85
+    assert f.dividend_yield_pct == pytest.approx(2.1, abs=1e-6)
+    assert f.profit_margin_pct == pytest.approx(18.0, abs=1e-6)
+    assert f.fcf_yield_pct == pytest.approx(6.0, abs=1e-6)
+
+
+def test_get_fundamentals_returns_none_when_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    market_data.clear_cache()
+    monkeypatch.setattr(market_data.yf, "Ticker", lambda t: _FakeTicker(info={}))
+    assert market_data.get_fundamentals("NADA") is None
+
+
+# ------------------------------ insider ------------------------------------
+
+
+def _insider_frame(rows: list[tuple[str, float, float, str]]) -> pd.DataFrame:
+    """rows = [(transaction, value, shares, days_ago_iso)]"""
+    return pd.DataFrame(
+        {
+            "Transaction": [r[0] for r in rows],
+            "Value": [r[1] for r in rows],
+            "Shares": [r[2] for r in rows],
+            "Start Date": [r[3] for r in rows],
+        }
+    )
+
+
+def test_get_insider_activity_filters_to_90d_and_sums_dollars(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    market_data.clear_cache()
+    today = pd.Timestamp.now(tz="UTC").normalize()
+    recent_buy = (today - pd.Timedelta(days=10)).strftime("%Y-%m-%d")
+    recent_sell = (today - pd.Timedelta(days=30)).strftime("%Y-%m-%d")
+    older = (today - pd.Timedelta(days=200)).strftime("%Y-%m-%d")
+
+    frame = _insider_frame(
+        [
+            ("Purchase", 100_000.0, 1000.0, recent_buy),
+            ("Purchase", 50_000.0, 500.0, recent_buy),
+            ("Sale", 30_000.0, 300.0, recent_sell),
+            ("Purchase", 999_999.0, 10000.0, older),  # outside 90d -> ignored
+        ]
+    )
+    monkeypatch.setattr(
+        market_data.yf,
+        "Ticker",
+        lambda t: _FakeTicker(insider_frame=frame, info={"sharesOutstanding": 1_000_000.0}),
+    )
+
+    a = market_data.get_insider_activity("ABC")
+    assert a is not None
+    assert a.buy_count_90d == 2
+    assert a.sell_count_90d == 1
+    assert a.net_dollars_90d == pytest.approx(120_000.0, abs=1e-6)  # 100k + 50k - 30k
+    # Net shares = 1000 + 500 - 300 = 1200 / 1_000_000 * 100 = 0.12%
+    assert a.net_share_pct == pytest.approx(0.12, abs=1e-6)
+
+
+def test_get_insider_activity_handles_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    market_data.clear_cache()
+    monkeypatch.setattr(market_data.yf, "Ticker", lambda t: _FakeTicker(insider_frame=None))
+    assert market_data.get_insider_activity("NADA") is None
+
+
+def test_get_insider_activity_swallows_exceptions(monkeypatch: pytest.MonkeyPatch) -> None:
+    market_data.clear_cache()
+    monkeypatch.setattr(
+        market_data.yf, "Ticker", lambda t: _FakeTicker(raises=RuntimeError("rate limited"))
+    )
+    assert market_data.get_insider_activity("ERR") is None
+
+
+# ----------------------------- implied move --------------------------------
+
+
+def _option_row(strike: float, bid: float, ask: float, iv: float, last: float = 0.0) -> dict:
+    return {"strike": strike, "bid": bid, "ask": ask, "lastPrice": last, "impliedVolatility": iv}
+
+
+def _option_chain_obj(calls: list[dict], puts: list[dict]):
+    class _Chain:
+        pass
+
+    c = _Chain()
+    c.calls = pd.DataFrame(calls)
+    c.puts = pd.DataFrame(puts)
+    return c
+
+
+def test_get_earnings_implied_move_atm_straddle(monkeypatch: pytest.MonkeyPatch) -> None:
+    market_data.clear_cache()
+    exp = "2026-05-22"
+    chain = _option_chain_obj(
+        calls=[
+            _option_row(95, 4.0, 4.6, 0.55),
+            _option_row(100, 2.4, 2.8, 0.50),    # ATM
+            _option_row(105, 1.0, 1.2, 0.60),
+        ],
+        puts=[
+            _option_row(95, 0.8, 1.0, 0.58),
+            _option_row(100, 2.0, 2.4, 0.52),    # ATM
+            _option_row(105, 4.5, 5.0, 0.62),
+        ],
+    )
+    monkeypatch.setattr(
+        market_data.yf,
+        "Ticker",
+        lambda t: _FakeTicker(options=(exp,), option_chains={exp: chain}),
+    )
+
+    next_earnings = datetime(2026, 5, 20, tzinfo=timezone.utc)
+    m = market_data.get_earnings_implied_move("NFLX", current_price=100.0, next_earnings_date=next_earnings)
+    assert m is not None
+    # call mid 2.6, put mid 2.2 -> 4.8 / 100 * 100 = 4.8%
+    assert m.implied_move_pct == pytest.approx(4.8, abs=1e-2)
+    assert m.expiration_date.isoformat() == exp
+    assert m.atm_call_iv == pytest.approx(50.0, abs=1e-6)
+    assert m.atm_put_iv == pytest.approx(52.0, abs=1e-6)
+
+
+def test_get_earnings_implied_move_no_options(monkeypatch: pytest.MonkeyPatch) -> None:
+    market_data.clear_cache()
+    monkeypatch.setattr(market_data.yf, "Ticker", lambda t: _FakeTicker(options=()))
+    m = market_data.get_earnings_implied_move(
+        "NADA", current_price=100.0, next_earnings_date=datetime(2026, 5, 20, tzinfo=timezone.utc)
+    )
+    assert m is None
+
+
+def test_get_earnings_implied_move_skipped_on_null_inputs() -> None:
+    assert market_data.get_earnings_implied_move("X", current_price=100.0, next_earnings_date=None) is None
+    assert market_data.get_earnings_implied_move(
+        "X", current_price=0.0, next_earnings_date=datetime(2026, 5, 20)
+    ) is None
+
+
+# --------------------------------- FX --------------------------------------
+
+
+def test_get_fx_rates_uses_price_history(monkeypatch: pytest.MonkeyPatch) -> None:
+    market_data.clear_cache()
+    fake_close = pd.DataFrame({"Close": [0.146]}, index=[pd.Timestamp("2026-05-09")])
+
+    def fake_history(ticker: str, period: str = "5d"):
+        assert period == "5d"
+        return fake_close
+
+    monkeypatch.setattr(market_data, "get_price_history", fake_history)
+
+    out = market_data.get_fx_rates({"DKK", "USD"}, home="USD")
+    assert "USD_USD" not in out  # home filtered out
+    assert out["DKK_USD"] == pytest.approx(0.146, abs=1e-6)
+
+
+def test_get_fx_rates_handles_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    market_data.clear_cache()
+    monkeypatch.setattr(market_data, "get_price_history", lambda *a, **k: None)
+    out = market_data.get_fx_rates({"DKK", "EUR"}, home="USD")
+    assert out["DKK_USD"] is None
+    assert out["EUR_USD"] is None
