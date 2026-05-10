@@ -88,7 +88,7 @@ const ProfilesPage = async () => {
                         confirmLabel="Delete"
                         destructive
                         successMessage="Profile deleted"
-                        onConfirm={() => deleteProfile(p.id)}
+                        onConfirm={deleteProfile.bind(null, p.id)}
                       />
                     </div>
                   </TableCell>
