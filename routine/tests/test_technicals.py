@@ -11,7 +11,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from lib.technicals import compute_indicators
+from lib.technicals import compute_indicators, pct_change_30d, pct_change_30d_from_frame
 
 
 def _load(fixtures_dir: Path) -> pd.DataFrame:
@@ -91,3 +91,25 @@ def test_compute_indicators_atr_matches_hand_calc() -> None:
     )
     ind = compute_indicators(df)
     assert ind.atr_14 == pytest.approx(1.0, abs=1e-3)
+
+
+def test_pct_change_30d_matches_compute_indicators(fixtures_dir: Path) -> None:
+    df = _load(fixtures_dir)
+    inline = compute_indicators(df).pct_change_30d
+    extracted = pct_change_30d_from_frame(df)
+    assert inline == pytest.approx(extracted, abs=1e-9)
+
+
+def test_pct_change_30d_short_series() -> None:
+    closes = pd.Series([100.0, 101.0, 102.0])
+    assert pct_change_30d(closes) is None
+
+
+def test_pct_change_30d_known_value() -> None:
+    closes = pd.Series([100.0] * 30 + [110.0])  # exactly 31 rows
+    assert pct_change_30d(closes) == pytest.approx(10.0, abs=1e-9)
+
+
+def test_pct_change_30d_from_frame_handles_none() -> None:
+    assert pct_change_30d_from_frame(None) is None
+    assert pct_change_30d_from_frame(pd.DataFrame()) is None

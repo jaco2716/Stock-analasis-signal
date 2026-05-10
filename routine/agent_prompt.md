@@ -66,11 +66,35 @@ Combine the brief's indicators with the news. Use these heuristics:
 - Specific catalysts (earnings beat, regulatory approval, downgrade) shift confidence more than "analyst sentiment" pieces.
 - Conflicting news + mixed indicators ⇒ default to HOLD.
 
-**Earnings recency** (`days_since_earnings`)
+**Earnings calendar** (`days_since_earnings`, `days_until_earnings`)
 
-- `< 14` days: recent print — explains the current technical pattern. Cite the print in your reasoning.
-- `> 60` days and a forward print is suspected: pre-earnings calendar risk. Lower confidence on directional calls.
-- `null`: yfinance had no data for this ticker (common for non-US listings). Don't assume "no earnings" — just lacking data.
+- `days_since_earnings < 14`: recent print — explains the current technical pattern. Cite the print in your reasoning.
+- `days_until_earnings < 7`: avoid taking strong directional positions; default to HOLD with reduced confidence regardless of technicals.
+- `days_until_earnings` between 7 and 14: size BUY/SELL confidence down by ~one band; Q-print volatility is about to dominate.
+- `days_until_earnings > 30` (or null): no calendar gate — decide on technicals + news.
+- Both null: yfinance had no data for this ticker (common for non-US listings). Don't assume "no earnings" — just lacking data.
+
+**Real-time / market state** (`intraday_price`, `intraday_change_pct`, `pre_market_price`, `pre_market_change_pct`, `market_state`)
+
+- The price-history data is **yesterday's close**. The realtime block tells you whether the brief is already stale.
+- If `intraday_change_pct` is meaningfully different (e.g. > 1%) from what `pct_change_30d` implies for a single day, cite the intraday move in the reasoning.
+- `pre_market_change_pct > 2%` on news is one of the strongest tradable signals a brief can carry — bias confidence toward the catalyst direction.
+- `market_state`: `"REGULAR"` = live trading; `"PRE"` / `"POST"` = extended hours (lighter volume, treat moves with discount); `"CLOSED"` = stale snapshot.
+- All-null block = yfinance gave us nothing this run; rely on yesterday's close.
+
+**Analyst consensus** (`analyst_target_mean`, `analyst_target_distance_pct`, `analyst_target_high`, `analyst_target_low`, `analyst_recommendation_key`, `analyst_count`)
+
+- `analyst_target_distance_pct > +20%` and `recommendation_key in {"buy", "strong_buy"}`: confirming BUY signal — Wall St sees room above current price.
+- `analyst_target_distance_pct < −10%` with `recommendation_key in {"sell", "strong_sell", "underperform"}`: confirming SELL.
+- `analyst_target_high / analyst_target_low > ~2x`: the Street is split — discount the mean, treat the consensus as "weak signal."
+- `analyst_count` < 5: thin coverage, weak signal regardless of the read.
+- Null block: yfinance had no analyst data — ignore this gate.
+
+**Relative strength** (`baseline_index`, `relative_strength_30d_pct`)
+
+- Positive `relative_strength_30d_pct` = ticker outperforming its home-market index = real alpha. Confirms a bullish technical read.
+- Negative on a constructive technical setup ⇒ the bullish read is mostly **beta** (the whole index moved). Downgrade confidence.
+- A US ticker is benchmarked against `^GSPC`; a `.CO` ticker against `^OMXC25`, etc. Cite the baseline you're using.
 
 **Prior signals** (`signal_history`, last 5 newest-first)
 

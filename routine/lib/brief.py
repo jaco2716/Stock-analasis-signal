@@ -7,7 +7,14 @@ from uuid import UUID
 
 import pandas as pd
 
-from .models import Holding, Indicators, Profile, SignalRecord
+from .models import (
+    AnalystConsensus,
+    Holding,
+    Indicators,
+    Profile,
+    RealtimeQuote,
+    SignalRecord,
+)
 
 DEFAULT_BRIEF_PATH = "/tmp/stock-analysis-brief.json"
 
@@ -91,6 +98,72 @@ def _serialize_signal_history(history: list[SignalRecord] | None) -> list[dict[s
     ]
 
 
+def _realtime_fields(rt: RealtimeQuote | None) -> dict[str, Any]:
+    if rt is None:
+        return {
+            "intraday_price": None,
+            "intraday_change_pct": None,
+            "pre_market_price": None,
+            "pre_market_change_pct": None,
+            "market_state": None,
+        }
+    return {
+        "intraday_price": rt.intraday_price,
+        "intraday_change_pct": rt.intraday_change_pct,
+        "pre_market_price": rt.pre_market_price,
+        "pre_market_change_pct": rt.pre_market_change_pct,
+        "market_state": rt.market_state,
+    }
+
+
+def _analyst_fields(ac: AnalystConsensus | None, current_price: float) -> dict[str, Any]:
+    if ac is None:
+        return {
+            "analyst_target_mean": None,
+            "analyst_target_distance_pct": None,
+            "analyst_target_high": None,
+            "analyst_target_low": None,
+            "analyst_recommendation_key": None,
+            "analyst_count": None,
+        }
+    distance = (
+        round((ac.target_mean / current_price - 1.0) * 100.0, 2)
+        if ac.target_mean is not None and current_price
+        else None
+    )
+    return {
+        "analyst_target_mean": ac.target_mean,
+        "analyst_target_distance_pct": distance,
+        "analyst_target_high": ac.target_high,
+        "analyst_target_low": ac.target_low,
+        "analyst_recommendation_key": ac.recommendation_key,
+        "analyst_count": ac.analyst_count,
+    }
+
+
+def _relative_strength_fields(rs: dict | None) -> dict[str, Any]:
+    if rs is None:
+        return {
+            "baseline_index": None,
+            "baseline_pct_change_30d": None,
+            "relative_strength_30d_pct": None,
+        }
+    return {
+        "baseline_index": rs.get("baseline_index"),
+        "baseline_pct_change_30d": rs.get("baseline_pct_change_30d"),
+        "relative_strength_30d_pct": rs.get("relative_strength_30d_pct"),
+    }
+
+
+def _days_until(d: date | datetime | None) -> int | None:
+    if d is None:
+        return None
+    today = datetime.now(timezone.utc).date()
+    target = d.date() if isinstance(d, datetime) else d
+    delta = (target - today).days
+    return delta if delta >= 0 else None
+
+
 def _pnl(
     quantity: float | None, avg_buy: float | None, current_price: float
 ) -> tuple[float | None, float | None, float | None, float | None]:
@@ -120,12 +193,22 @@ def _days_since(d: date | datetime | None) -> int | None:
     return (today - target).days
 
 
+def _date_iso(d: date | datetime | None) -> str | None:
+    if d is None:
+        return None
+    return (d.date() if isinstance(d, datetime) else d).isoformat()
+
+
 def build_holding_section(
     holding: Holding,
     prices: pd.DataFrame,
     indicators: Indicators,
     last_earnings_date: date | datetime | None = None,
+    next_earnings_date: date | datetime | None = None,
     signal_history: list[SignalRecord] | None = None,
+    realtime: RealtimeQuote | None = None,
+    analyst: AnalystConsensus | None = None,
+    relative_strength: dict | None = None,
 ) -> dict[str, Any]:
     closes = prices["Close"].astype(float).tail(_RECENT_CLOSES).tolist()
     current_price = float(prices["Close"].astype(float).iloc[-1])
@@ -157,17 +240,14 @@ def build_holding_section(
         "indicators": ind,
         **_high_low_52w(prices, current_price),
         **_volume_context(prices),
-        "last_earnings_date": (
-            (
-                last_earnings_date.date()
-                if isinstance(last_earnings_date, datetime)
-                else last_earnings_date
-            ).isoformat()
-            if last_earnings_date is not None
-            else None
-        ),
+        "last_earnings_date": _date_iso(last_earnings_date),
         "days_since_earnings": _days_since(last_earnings_date),
+        "next_earnings_date": _date_iso(next_earnings_date),
+        "days_until_earnings": _days_until(next_earnings_date),
         "signal_history": _serialize_signal_history(signal_history),
+        **_realtime_fields(realtime),
+        **_analyst_fields(analyst, current_price),
+        **_relative_strength_fields(relative_strength),
     }
     return section
 

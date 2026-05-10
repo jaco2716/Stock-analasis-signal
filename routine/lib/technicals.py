@@ -33,6 +33,22 @@ def _last_or_none(s: pd.Series) -> float | None:
     return float(v)
 
 
+def pct_change_30d(close: pd.Series) -> float | None:
+    if close is None or len(close) < 31:
+        return None
+    prev = close.iloc[-31]
+    last = close.iloc[-1]
+    if pd.isna(prev) or pd.isna(last) or not prev:
+        return None
+    return float((last - prev) / prev * 100.0)
+
+
+def pct_change_30d_from_frame(df: pd.DataFrame | None) -> float | None:
+    if df is None or df.empty or "Close" not in df.columns:
+        return None
+    return pct_change_30d(df["Close"].astype(float))
+
+
 def _atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     high = df["High"].astype(float)
     low = df["Low"].astype(float)
@@ -65,13 +81,6 @@ def compute_indicators(df: pd.DataFrame) -> Indicators:
     if {"High", "Low"}.issubset(df.columns):
         atr_14 = _last_or_none(_atr(df, 14))
 
-    pct_30d: float | None = None
-    if len(close) >= 31:
-        prev = close.iloc[-31]
-        last = close.iloc[-1]
-        if prev:
-            pct_30d = float((last - prev) / prev * 100.0)
-
     return Indicators(
         last_close=float(close.iloc[-1]),
         rsi_14=_last_or_none(rsi),
@@ -80,6 +89,6 @@ def compute_indicators(df: pd.DataFrame) -> Indicators:
         sma_200=_last_or_none(sma_200),
         macd=_last_or_none(macd),
         macd_signal=_last_or_none(macd_sig),
-        pct_change_30d=pct_30d,
+        pct_change_30d=pct_change_30d(close),
         atr_14=atr_14,
     )

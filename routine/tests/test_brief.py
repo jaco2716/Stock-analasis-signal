@@ -7,7 +7,13 @@ import pandas as pd
 import pytest
 
 from lib import brief
-from lib.models import Holding, Indicators, SignalRecord
+from lib.models import (
+    AnalystConsensus,
+    Holding,
+    Indicators,
+    RealtimeQuote,
+    SignalRecord,
+)
 
 
 def _holding(kind: str = "owned") -> Holding:
@@ -147,3 +153,94 @@ def test_signal_history_serialization() -> None:
     assert section["signal_history"][0]["signal_type"] == "HOLD"
     assert section["signal_history"][0]["confidence"] == 0.6
     assert "generated_at" in section["signal_history"][0]
+
+
+# --------------------------- Tier-2 fields --------------------------------
+
+
+def test_realtime_fields_populate_when_provided() -> None:
+    rt = RealtimeQuote(
+        intraday_price=87.5,
+        intraday_change_pct=-1.2,
+        pre_market_price=88.0,
+        pre_market_change_pct=0.5,
+        market_state="REGULAR",
+    )
+    section = brief.build_holding_section(_holding(), _prices(), _indicators(), realtime=rt)
+    assert section["intraday_price"] == 87.5
+    assert section["intraday_change_pct"] == -1.2
+    assert section["pre_market_price"] == 88.0
+    assert section["market_state"] == "REGULAR"
+
+
+def test_realtime_fields_default_to_null() -> None:
+    section = brief.build_holding_section(_holding(), _prices(), _indicators())
+    for key in (
+        "intraday_price",
+        "intraday_change_pct",
+        "pre_market_price",
+        "pre_market_change_pct",
+        "market_state",
+    ):
+        assert section[key] is None
+
+
+def test_analyst_target_distance_pct_derived() -> None:
+    ac = AnalystConsensus(
+        target_mean=100.0,
+        target_high=130.0,
+        target_low=80.0,
+        recommendation_key="buy",
+        analyst_count=20,
+    )
+    section = brief.build_holding_section(_holding(), _prices(), _indicators(), analyst=ac)
+    # current_price comes from prices fixture (50 + 259 % 11 = 50 + 6 = 56)
+    expected_distance = round((100.0 / section["current_price"] - 1) * 100, 2)
+    assert section["analyst_target_distance_pct"] == expected_distance
+    assert section["analyst_recommendation_key"] == "buy"
+    assert section["analyst_count"] == 20
+
+
+def test_analyst_fields_default_to_null() -> None:
+    section = brief.build_holding_section(_holding(), _prices(), _indicators())
+    for key in (
+        "analyst_target_mean",
+        "analyst_target_distance_pct",
+        "analyst_target_high",
+        "analyst_target_low",
+        "analyst_recommendation_key",
+        "analyst_count",
+    ):
+        assert section[key] is None
+
+
+def test_relative_strength_serializes_top_level() -> None:
+    rs = {
+        "baseline_index": "^OMXC25",
+        "baseline_pct_change_30d": -1.4,
+        "relative_strength_30d_pct": 4.7,
+    }
+    section = brief.build_holding_section(
+        _holding(), _prices(), _indicators(), relative_strength=rs
+    )
+    assert section["baseline_index"] == "^OMXC25"
+    assert section["baseline_pct_change_30d"] == -1.4
+    assert section["relative_strength_30d_pct"] == 4.7
+
+
+def test_next_earnings_date_and_days_until() -> None:
+    today = datetime.now(timezone.utc).date()
+    next_date = today + timedelta(days=21)
+    section = brief.build_holding_section(
+        _holding(), _prices(), _indicators(), next_earnings_date=next_date
+    )
+    assert section["next_earnings_date"] == next_date.isoformat()
+    assert section["days_until_earnings"] == 21
+
+
+def test_next_earnings_date_in_past_yields_null_days_until() -> None:
+    past = datetime.now(timezone.utc) - timedelta(days=3)
+    section = brief.build_holding_section(
+        _holding(), _prices(), _indicators(), next_earnings_date=past
+    )
+    assert section["days_until_earnings"] is None

@@ -67,6 +67,32 @@ class SignalRecord:
 
 
 @dataclass(frozen=True)
+class RealtimeQuote:
+    """Snapshot of intraday + pre-market state from yfinance."""
+
+    intraday_price: float | None
+    intraday_change_pct: float | None
+    pre_market_price: float | None
+    pre_market_change_pct: float | None
+    market_state: str | None
+
+
+@dataclass(frozen=True)
+class AnalystConsensus:
+    target_mean: float | None
+    target_high: float | None
+    target_low: float | None
+    recommendation_key: str | None
+    analyst_count: int | None
+
+
+@dataclass(frozen=True)
+class EarningsCalendar:
+    last_past: datetime | None
+    next_future: datetime | None
+
+
+@dataclass(frozen=True)
 class RunContext:
     run_id: UUID
     started_at: datetime

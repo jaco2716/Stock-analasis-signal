@@ -219,14 +219,40 @@ def cmd_prepare(args: argparse.Namespace) -> int:
                     log.warning("skipping %s: no price data", holding.ticker)
                     continue
                 indicators = technicals.compute_indicators(prices)
-                last_earnings = market_data.get_last_earnings_date(holding.ticker)
+
+                cal = market_data.get_earnings_calendar(holding.ticker)
+                realtime = market_data.get_realtime_quote(holding.ticker)
+                analyst = market_data.get_analyst_consensus(holding.ticker)
+
+                baseline_idx = market_data.get_index_for_ticker(holding.ticker)
+                baseline_prices = market_data.get_price_history(baseline_idx, period="2y")
+                baseline_pct_30d = technicals.pct_change_30d_from_frame(baseline_prices)
+                rel_strength_pct = (
+                    indicators.pct_change_30d - baseline_pct_30d
+                    if indicators.pct_change_30d is not None and baseline_pct_30d is not None
+                    else None
+                )
+                relative_strength = {
+                    "baseline_index": baseline_idx,
+                    "baseline_pct_change_30d": (
+                        round(baseline_pct_30d, 3) if baseline_pct_30d is not None else None
+                    ),
+                    "relative_strength_30d_pct": (
+                        round(rel_strength_pct, 3) if rel_strength_pct is not None else None
+                    ),
+                }
+
                 holding_sections.append(
                     brief.build_holding_section(
                         holding,
                         prices,
                         indicators,
-                        last_earnings_date=last_earnings,
+                        last_earnings_date=cal.last_past,
+                        next_earnings_date=cal.next_future,
                         signal_history=signal_history_by_ticker.get(holding.ticker),
+                        realtime=realtime,
+                        analyst=analyst,
+                        relative_strength=relative_strength,
                     )
                 )
             except Exception:
