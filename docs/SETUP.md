@@ -67,16 +67,21 @@ From the repo root:
 ```bash
 supabase login
 supabase link --project-ref <your-ref-id>
-# Apply each migration in order:
-supabase db push
+# Apply each migration in order against the linked project.
+# (Migrations live at db/migrations/, not the default supabase/migrations/,
+# so `supabase db push` won't pick them up — apply them explicitly:)
+for f in db/migrations/*.sql; do
+  echo "Applying $f"
+  supabase db query --linked -f "$f" || break
+done
 # Or, if you prefer manual control, paste each file from db/migrations/
-# into the Supabase SQL editor in order: 0001 -> 0002 -> 0003.
+# into the Supabase SQL editor in order: 0001 -> 0002 -> 0003 -> 0004.
 ```
 
 ### 1.4 Seed the default profile
 
 ```bash
-supabase db execute --file db/seed.sql
+supabase db query --linked -f db/seed.sql
 # Or paste db/seed.sql into the SQL editor.
 ```
 
@@ -84,11 +89,10 @@ Verify in **Table Editor**: `profiles` should have one row (`Default` / `default
 
 ### 1.5 Generate the TypeScript types
 
-The frontend imports `Database` from `frontend/lib/database.types.ts`. Regenerate it after every migration:
+The frontend imports `Database` from `frontend/lib/database.types.ts`. Regenerate it after every migration. Run from the **repo root** so the CLI uses the root-level `supabase/` link state (running it from `frontend/` creates a second `supabase/` link folder there — don't):
 
 ```bash
-cd frontend
-supabase gen types typescript --linked > lib/database.types.ts
+supabase gen types typescript --linked > frontend/lib/database.types.ts
 ```
 
 See [`SCHEMA.md`](SCHEMA.md) for the full sync discipline (TS + Python).
