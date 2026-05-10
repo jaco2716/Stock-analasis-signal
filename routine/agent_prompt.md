@@ -116,7 +116,9 @@ python -m run_analysis emit-signal \
 
 **Reasoning discipline**: 2–3 sentences, citing **specific numbers from the brief** (RSI value, MACD direction, % change, P&L % for owned holdings) and **specific news items** (date + catalyst). No generic statements. Max ~600 chars to stay well under the 800-char DB limit and 1024-char Discord field limit.
 
-**Emit incrementally** — do not accumulate all signals and dump them at the end. Each `emit-signal` call posts to Discord immediately, so the user sees signals stream in. A failure mid-loop leaves earlier signals committed instead of losing the whole run.
+**Emit incrementally** — call `emit-signal` once per holding as you go; do not accumulate decisions and dump them at the end. Each call inserts the row into Supabase immediately, so a failure mid-loop leaves earlier signals committed.
+
+**Discord posting**: `BUY` and `SELL` post a detailed embed to Discord on each `emit-signal` call so the user sees them stream in. `HOLD` signals are queued by the helper and flushed as a single compact summary message per profile when you run `finish-run`. You don't need to do anything special — just call `emit-signal` for every holding; the helper handles both routes.
 
 If `emit-signal` exits non-zero for one holding, log it, continue, and remember to mark the run `partial` at the end.
 

@@ -199,3 +199,105 @@ def test_post_signal_retries_once_on_429(monkeypatch: pytest.MonkeyPatch) -> Non
 
     assert len(responses.calls) == 2
     assert sleeps == [0.0]
+
+
+def _hold_item(
+    ticker: str = "NOVO-B.CO",
+    is_watchlist: bool = False,
+    pnl_pct: float | None = 3.5,
+    rsi: float | None = 52.3,
+    reasoning: str = "Mixed indicators; no catalyst within 14d.",
+) -> discord.HoldSummaryItem:
+    return discord.HoldSummaryItem(
+        ticker=ticker,
+        current_price=487.20,
+        currency="DKK",
+        rsi_14=rsi,
+        confidence=0.65,
+        reasoning=reasoning,
+        is_watchlist=is_watchlist,
+        pnl_pct=pnl_pct,
+    )
+
+
+def test_build_hold_summary_payload_renders_each_item() -> None:
+    profile = _profile("https://discord.test/webhooks/profile")
+    items = [
+        _hold_item("NOVO-B.CO", reasoning="Mixed indicators."),
+        _hold_item("DSV.CO", pnl_pct=-2.1, reasoning="Sideways awaiting earnings."),
+        _hold_item("TSLA", is_watchlist=True, pnl_pct=None, reasoning="No entry trigger."),
+    ]
+    payload = discord.build_hold_summary_payload(
+        items=items, profile=profile, run_id=uuid4(), using_fallback=False
+    )
+    embed = payload["embeds"][0]
+    assert embed["title"] == "📊 HOLD Summary (3)"
+    assert embed["color"] == 0x6B7280
+    desc = embed["description"]
+    assert "**NOVO-B.CO**" in desc
+    assert "+3.5%" in desc
+    assert "-2.1%" in desc
+    # Watchlist line shows the [W] tag but no P&L segment in its header.
+    tsla_header = desc.split("**TSLA**")[1].split("\n", 1)[0]
+    assert "[W]" in tsla_header
+    assert "%" in tsla_header  # confidence %
+    assert "+" not in tsla_header and "-" not in tsla_header  # no P&L sign
+
+
+def test_build_hold_summary_payload_uses_fallback_prefix() -> None:
+    profile = _profile(None)
+    payload = discord.build_hold_summary_payload(
+        items=[_hold_item()], profile=profile, run_id=None, using_fallback=True
+    )
+    assert payload["embeds"][0]["title"].startswith("[Alice] 📊 HOLD Summary")
+
+
+def test_build_hold_summary_payload_truncates_long_descriptions() -> None:
+    profile = _profile("https://discord.test/webhooks/profile")
+    items = [_hold_item(f"TICK{i}", reasoning="x" * 500) for i in range(60)]
+    payload = discord.build_hold_summary_payload(
+        items=items, profile=profile, run_id=uuid4(), using_fallback=False
+    )
+    assert len(payload["embeds"][0]["description"]) <= 4000
+
+
+@responses.activate
+def test_post_hold_summary_uses_profile_webhook() -> None:
+    profile = _profile("https://discord.test/webhooks/profile")
+    responses.add(responses.POST, "https://discord.test/webhooks/profile", status=204)
+
+    discord.post_hold_summary([_hold_item()], profile, uuid4())
+
+    assert len(responses.calls) == 1
+    body = responses.calls[0].request.body
+    payload = body.decode() if isinstance(body, bytes) else body
+    assert "HOLD Summary" in payload
+    assert "[Alice]" not in payload
+
+
+@responses.activate
+def test_post_hold_summary_falls_back_with_prefix() -> None:
+    profile = _profile(None)
+    responses.add(responses.POST, "https://discord.test/webhooks/default", status=204)
+
+    discord.post_hold_summary([_hold_item()], profile, uuid4())
+
+    assert len(responses.calls) == 1
+    body = responses.calls[0].request.body
+    payload = body.decode() if isinstance(body, bytes) else body
+    assert "[Alice]" in payload
+    assert "HOLD Summary" in payload
+
+
+@responses.activate
+def test_post_hold_summary_skips_when_no_items() -> None:
+    profile = _profile("https://discord.test/webhooks/profile")
+    discord.post_hold_summary([], profile, uuid4())
+    assert len(responses.calls) == 0
+
+
+@responses.activate
+def test_post_hold_summary_dry_run_does_not_post() -> None:
+    profile = _profile("https://discord.test/webhooks/profile")
+    discord.post_hold_summary([_hold_item()], profile, uuid4(), dry_run=True)
+    assert len(responses.calls) == 0

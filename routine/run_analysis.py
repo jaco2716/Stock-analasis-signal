@@ -4,15 +4,18 @@ import argparse
 import json
 import logging
 import sys
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
 
 from lib import brief, discord, market_data, supabase_client, technicals
 from lib.logging import setup_logging
-from lib.models import Signal
+from lib.models import Profile, Signal
 
 log = logging.getLogger(__name__)
+
+DEFAULT_HOLDS_PATH = "/tmp/stock-analysis-holds.json"
 
 
 def _parse_uuid(s: str) -> UUID:
@@ -44,6 +47,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=brief.DEFAULT_BRIEF_PATH,
         help=f"Where to write the brief (default: {brief.DEFAULT_BRIEF_PATH}).",
     )
+    prep.add_argument(
+        "--holds-path",
+        default=DEFAULT_HOLDS_PATH,
+        help=f"Where the HOLD queue is staged (default: {DEFAULT_HOLDS_PATH}).",
+    )
     prep.add_argument("--dry-run", action="store_true", help="Skip Supabase run row insert.")
     prep.add_argument("--verbose", action="store_true", help="DEBUG logging.")
 
@@ -59,6 +67,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=brief.DEFAULT_BRIEF_PATH,
         help=f"Brief JSON to read price/indicator context from (default: {brief.DEFAULT_BRIEF_PATH}).",
     )
+    emit.add_argument(
+        "--holds-path",
+        default=DEFAULT_HOLDS_PATH,
+        help=f"Where to queue HOLD signals for the batched summary (default: {DEFAULT_HOLDS_PATH}).",
+    )
     emit.add_argument("--dry-run", action="store_true", help="No DB write, no Discord post.")
     emit.add_argument("--verbose", action="store_true", help="DEBUG logging.")
 
@@ -68,14 +81,110 @@ def build_parser() -> argparse.ArgumentParser:
     fin.add_argument("--error", default=None)
     fin.add_argument("--profile-count", type=int, default=0)
     fin.add_argument("--signal-count", type=int, default=0)
+    fin.add_argument(
+        "--holds-path",
+        default=DEFAULT_HOLDS_PATH,
+        help=f"Where the HOLD queue was staged (default: {DEFAULT_HOLDS_PATH}).",
+    )
     fin.add_argument("--dry-run", action="store_true", help="No Supabase write.")
     fin.add_argument("--verbose", action="store_true", help="DEBUG logging.")
 
     return p
 
 
+def _read_holds_queue(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        log.warning("hold queue at %s unreadable; resetting", path)
+        return {}
+
+
+def _write_holds_queue(path: Path, queue: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(queue, indent=2, default=str), encoding="utf-8")
+
+
+def _clear_holds_queue(path: Path) -> None:
+    if path.exists():
+        path.unlink()
+
+
+def _enqueue_hold(
+    path: Path,
+    run_id: UUID,
+    profile: Profile,
+    item: discord.HoldSummaryItem,
+) -> None:
+    queue = _read_holds_queue(path)
+    if queue.get("run_id") and queue.get("run_id") != str(run_id):
+        queue = {}
+    queue.setdefault("run_id", str(run_id))
+    profiles = queue.setdefault("profiles", {})
+    bucket = profiles.setdefault(
+        str(profile.id),
+        {
+            "profile": {
+                "id": str(profile.id),
+                "slug": profile.slug,
+                "name": profile.name,
+                "discord_webhook_url": profile.discord_webhook_url,
+            },
+            "items": [],
+        },
+    )
+    bucket["items"].append(asdict(item))
+    _write_holds_queue(path, queue)
+
+
+def _flush_holds_queue(path: Path, run_id: UUID, dry_run: bool) -> None:
+    queue = _read_holds_queue(path)
+    if not queue:
+        return
+    if queue.get("run_id") != str(run_id):
+        log.info(
+            "hold queue is for run %s, not %s; leaving it alone",
+            queue.get("run_id"),
+            run_id,
+        )
+        return
+
+    for bucket in queue.get("profiles", {}).values():
+        prof_data = bucket["profile"]
+        profile = Profile(
+            id=UUID(prof_data["id"]),
+            slug=prof_data["slug"],
+            name=prof_data["name"],
+            discord_webhook_url=prof_data.get("discord_webhook_url"),
+            is_active=True,
+        )
+        items = [
+            discord.HoldSummaryItem(
+                ticker=d["ticker"],
+                current_price=float(d["current_price"]),
+                currency=d["currency"],
+                rsi_14=d.get("rsi_14"),
+                confidence=float(d["confidence"]),
+                reasoning=d["reasoning"],
+                is_watchlist=bool(d["is_watchlist"]),
+                pnl_pct=d.get("pnl_pct"),
+            )
+            for d in bucket.get("items", [])
+        ]
+        try:
+            discord.post_hold_summary(items, profile, run_id, dry_run=dry_run)
+        except Exception:
+            log.exception("failed to post hold summary for profile %s", profile.slug)
+
+    if not dry_run:
+        _clear_holds_queue(path)
+
+
 def cmd_prepare(args: argparse.Namespace) -> int:
     market_data.clear_cache()
+    _clear_holds_queue(Path(args.holds_path))
 
     profiles = supabase_client.get_active_profiles()
     if args.profile:
@@ -183,13 +292,34 @@ def cmd_emit_signal(args: argparse.Namespace) -> int:
     if not args.dry_run:
         supabase_client.insert_signal(signal)
 
+    currency = holding_section.get("currency") or "DKK"
+    is_watchlist = holding_section.get("kind") == "watchlist"
+
+    if args.signal == "HOLD":
+        item = discord.HoldSummaryItem(
+            ticker=args.ticker,
+            current_price=float(holding_section["current_price"]),
+            currency=currency,
+            rsi_14=indicators.rsi_14,
+            confidence=args.confidence,
+            reasoning=args.reasoning,
+            is_watchlist=is_watchlist,
+            pnl_pct=holding_section.get("pnl_pct"),
+        )
+        if args.dry_run:
+            log.info("[dry-run] would queue HOLD %s for batched summary", args.ticker)
+        else:
+            _enqueue_hold(Path(args.holds_path), args.run_id, profile, item)
+        log.info("emit-signal ok: HOLD %s conf=%.2f (queued)", args.ticker, args.confidence)
+        return 0
+
     ctx = discord.HoldingContext(
         quantity=holding_section.get("quantity"),
         cost_basis=holding_section.get("cost_basis"),
         current_value=holding_section.get("current_value"),
         pnl_pct=holding_section.get("pnl_pct"),
-        currency=(holding_section.get("currency") or "DKK"),
-        is_watchlist=(holding_section.get("kind") == "watchlist"),
+        currency=currency,
+        is_watchlist=is_watchlist,
     )
     discord.post_signal(
         signal=signal,
@@ -204,6 +334,8 @@ def cmd_emit_signal(args: argparse.Namespace) -> int:
 
 
 def cmd_finish_run(args: argparse.Namespace) -> int:
+    _flush_holds_queue(Path(args.holds_path), args.run_id, dry_run=args.dry_run)
+
     if args.dry_run:
         log.info(
             "[dry-run] would finalize run %s status=%s profiles=%d signals=%d",
