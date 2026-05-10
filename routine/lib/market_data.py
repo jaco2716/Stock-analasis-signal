@@ -1,10 +1,13 @@
 """yfinance wrapper with retries and a per-run cache."""
 
 import logging
+import os
+import xml.etree.ElementTree as ET
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import pandas as pd
+import requests
 import yfinance as yf
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
@@ -24,13 +27,16 @@ _CACHE: dict[tuple[str, str], pd.DataFrame] = {}
 _EARNINGS_CAL_CACHE: dict[str, EarningsCalendar] = {}
 _INFO_CACHE: dict[str, dict[str, Any] | None] = {}
 _INSIDER_CACHE: dict[str, InsiderActivity | None] = {}
+_CIK_MAP_CACHE: dict[str, int] | None = None
 
 
 def clear_cache() -> None:
+    global _CIK_MAP_CACHE
     _CACHE.clear()
     _EARNINGS_CAL_CACHE.clear()
     _INFO_CACHE.clear()
     _INSIDER_CACHE.clear()
+    _CIK_MAP_CACHE = None
 
 
 @retry(
@@ -214,6 +220,25 @@ _INDEX_BY_SUFFIX: dict[str, str] = {
 }
 _DEFAULT_INDEX = "^GSPC"
 
+# Sector-ETF mapping for US tickers — used to separate sector beta from ticker
+# alpha. Add tickers here as the portfolio grows; unknown tickers return None
+# and skip the sector RS computation.
+_SECTOR_ETF_BY_TICKER: dict[str, str] = {
+    "NFLX": "XLC",   # Communication Services
+    "ADBE": "IGV",   # Software ETF
+    "TSM":  "SMH",   # Semiconductors
+    "MSTR": "IBIT",  # Spot-Bitcoin ETF (BTC-treasury proxy)
+    "AAPL": "XLK",
+    "MSFT": "XLK",
+    "GOOGL": "XLC",
+    "META": "XLC",
+    "AMZN": "XLY",
+    "NVDA": "SMH",
+    "AMD":  "SMH",
+    "AVGO": "SMH",
+    "TSLA": "XLY",
+}
+
 
 def get_index_for_ticker(ticker: str) -> str:
     """Map a ticker to its home-market index by suffix; falls back to ^GSPC."""
@@ -224,6 +249,11 @@ def get_index_for_ticker(ticker: str) -> str:
             return _INDEX_BY_SUFFIX[suffix]
     log.info("no suffix-mapped index for %s; defaulting to %s", ticker, _DEFAULT_INDEX)
     return _DEFAULT_INDEX
+
+
+def get_sector_etf_for_ticker(ticker: str) -> str | None:
+    """Return the sector-benchmark ETF for a ticker, or None when no mapping."""
+    return _SECTOR_ETF_BY_TICKER.get(ticker.upper())
 
 
 # ---------------------------------------------------------------------------
@@ -330,8 +360,181 @@ def get_insider_activity(ticker: str) -> InsiderActivity | None:
                     )
     except Exception as e:
         log.warning("insider_transactions lookup failed for %s: %s", ticker, e)
+
+    if activity is None and _looks_like_us_ticker(ticker):
+        activity = _get_insider_activity_edgar(ticker)
+
     _INSIDER_CACHE[ticker] = activity
     return activity
+
+
+# ---------------------------------------------------------------------------
+# SEC EDGAR Form 4 fallback (US-listed tickers only)
+# ---------------------------------------------------------------------------
+
+_EDGAR_USER_AGENT = os.environ.get(
+    "SEC_EDGAR_USER_AGENT", "stock-analysis-routine contact@example.com"
+)
+_EDGAR_HEADERS = {"User-Agent": _EDGAR_USER_AGENT, "Accept-Encoding": "gzip, deflate"}
+_EDGAR_TIMEOUT = 10
+# Treat these Form 4 transaction codes as open-market buys / sells. Awards (A),
+# tax withholdings (F), derivative exercises (M), and gifts (G) are ignored —
+# they aren't conviction-bearing trades.
+_BUY_CODES = {"P"}
+_SELL_CODES = {"S", "D"}
+
+
+def _looks_like_us_ticker(ticker: str) -> bool:
+    """True when the ticker has no foreign-exchange suffix in _INDEX_BY_SUFFIX."""
+    upper = ticker.upper()
+    return not any(upper.endswith(suffix) for suffix in _INDEX_BY_SUFFIX)
+
+
+def _resolve_cik(ticker: str) -> int | None:
+    """Look up SEC CIK for a US-listed ticker. Caches the full map per session."""
+    global _CIK_MAP_CACHE
+    if _CIK_MAP_CACHE is None:
+        try:
+            r = requests.get(
+                "https://www.sec.gov/files/company_tickers.json",
+                headers=_EDGAR_HEADERS,
+                timeout=_EDGAR_TIMEOUT,
+            )
+            r.raise_for_status()
+            data = r.json()
+            _CIK_MAP_CACHE = {
+                str(row["ticker"]).upper(): int(row["cik_str"])
+                for row in data.values()
+                if "ticker" in row and "cik_str" in row
+            }
+        except Exception as e:
+            log.warning("EDGAR CIK map fetch failed: %s", e)
+            _CIK_MAP_CACHE = {}
+    return _CIK_MAP_CACHE.get(ticker.upper())
+
+
+def _fetch_edgar_filings_index(cik: int) -> list[dict[str, Any]]:
+    """Return recent filings list from the SEC submissions endpoint, or [] on error."""
+    url = f"https://data.sec.gov/submissions/CIK{cik:010d}.json"
+    try:
+        r = requests.get(url, headers=_EDGAR_HEADERS, timeout=_EDGAR_TIMEOUT)
+        r.raise_for_status()
+        body = r.json()
+    except Exception as e:
+        log.warning("EDGAR submissions fetch failed for CIK %d: %s", cik, e)
+        return []
+    recent = (body.get("filings") or {}).get("recent") or {}
+    forms = recent.get("form") or []
+    accs = recent.get("accessionNumber") or []
+    dates = recent.get("filingDate") or []
+    primary_docs = recent.get("primaryDocument") or []
+    out: list[dict[str, Any]] = []
+    for form, acc, fdate, doc in zip(forms, accs, dates, primary_docs):
+        out.append({"form": form, "accession": acc, "filing_date": fdate, "doc": doc})
+    return out
+
+
+def _parse_form4_xml(xml_bytes: bytes) -> list[tuple[str, float, float]]:
+    """Extract (code, shares, price) tuples from non-derivative transactions in a Form 4."""
+    out: list[tuple[str, float, float]] = []
+    try:
+        root = ET.fromstring(xml_bytes)
+    except ET.ParseError:
+        return out
+    for txn in root.iter("nonDerivativeTransaction"):
+        code_el = txn.find(".//transactionCode")
+        shares_el = txn.find(".//transactionShares/value")
+        price_el = txn.find(".//transactionPricePerShare/value")
+        if code_el is None or shares_el is None:
+            continue
+        try:
+            code = (code_el.text or "").strip().upper()
+            shares = float((shares_el.text or "0").strip() or 0.0)
+            price = float((price_el.text or "0").strip() or 0.0) if price_el is not None else 0.0
+        except (TypeError, ValueError):
+            continue
+        if code and shares > 0:
+            out.append((code, shares, price))
+    return out
+
+
+def _get_insider_activity_edgar(ticker: str) -> InsiderActivity | None:
+    """Aggregate the last 90 days of Form 4 buys/sells from SEC EDGAR."""
+    cik = _resolve_cik(ticker)
+    if cik is None:
+        return None
+    filings = _fetch_edgar_filings_index(cik)
+    if not filings:
+        return None
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).date()
+    form4_recent = [
+        f for f in filings
+        if f.get("form") == "4"
+        and _safe_date(f.get("filing_date")) is not None
+        and _safe_date(f["filing_date"]) >= cutoff
+    ]
+    if not form4_recent:
+        return None
+    # Defensive cap — a handful of mega-caps (NFLX, MSFT) can file >50 Form 4s
+    # in 90 days. The aggregate is dominated by the most recent filings, and
+    # we don't want a single ticker to spend 30s burning SEC's rate limit.
+    form4_recent = form4_recent[:40]
+
+    buys = sells = 0
+    buys_dollars = sells_dollars = 0.0
+    shares_net = 0.0
+    for f in form4_recent:
+        acc_no_dashes = (f["accession"] or "").replace("-", "")
+        doc_name = f.get("doc") or ""
+        if not acc_no_dashes or not doc_name:
+            continue
+        # SEC sometimes returns the doc path prefixed with an XSL stylesheet
+        # directory (e.g. "xslF345X06/wk-form4_123.xml"). That URL serves a
+        # rendered HTML view, not the raw XML we need — strip to the basename.
+        doc_basename = doc_name.rsplit("/", 1)[-1]
+        url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc_no_dashes}/{doc_basename}"
+        try:
+            r = requests.get(url, headers=_EDGAR_HEADERS, timeout=_EDGAR_TIMEOUT)
+            r.raise_for_status()
+        except Exception as e:
+            log.warning("EDGAR Form 4 fetch failed for %s: %s", url, e)
+            continue
+        for code, shares, price in _parse_form4_xml(r.content):
+            value = shares * price
+            if code in _BUY_CODES:
+                buys += 1
+                buys_dollars += value
+                shares_net += shares
+            elif code in _SELL_CODES:
+                sells += 1
+                sells_dollars += value
+                shares_net -= shares
+
+    if not (buys or sells):
+        return None
+    net_dollars = buys_dollars - sells_dollars
+    shares_outstanding = _f((_get_ticker_info(ticker) or {}).get("sharesOutstanding"))
+    net_share_pct = (
+        shares_net / shares_outstanding * 100.0
+        if shares_outstanding and shares_outstanding > 0
+        else None
+    )
+    return InsiderActivity(
+        net_dollars_90d=round(net_dollars, 2),
+        buy_count_90d=buys,
+        sell_count_90d=sells,
+        net_share_pct=round(net_share_pct, 4) if net_share_pct is not None else None,
+    )
+
+
+def _safe_date(s: str | None) -> date | None:
+    if not s:
+        return None
+    try:
+        return date.fromisoformat(s)
+    except (TypeError, ValueError):
+        return None
 
 
 def _option_mid(row: pd.Series) -> float | None:

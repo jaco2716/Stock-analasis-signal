@@ -90,11 +90,12 @@ Combine the brief's indicators with the news. Use these heuristics:
 - `analyst_count` < 5: thin coverage, weak signal regardless of the read.
 - Null block: yfinance had no analyst data — ignore this gate.
 
-**Relative strength** (`baseline_index`, `relative_strength_30d_pct`)
+**Relative strength** (`baseline_index`, `relative_strength_30d_pct`, optionally `sector_benchmark` + `sector_relative_strength_30d_pct`)
 
-- Positive `relative_strength_30d_pct` = ticker outperforming its home-market index = real alpha. Confirms a bullish technical read.
+- Positive `relative_strength_30d_pct` = ticker outperforming its home-market index = real alpha vs broad market. Confirms a bullish technical read.
 - Negative on a constructive technical setup ⇒ the bullish read is mostly **beta** (the whole index moved). Downgrade confidence.
 - A US ticker is benchmarked against `^GSPC`; a `.CO` ticker against `^OMXC25`, etc. Cite the baseline you're using.
+- **Sector RS, when present**, separates *sector* beta from *ticker* alpha. Example: TSM's `relative_strength_30d_pct` vs ^GSPC may be +12% but its `sector_relative_strength_30d_pct` vs SMH might be only +2% — most of the move was the AI-chip rally, not company-specific. Strong sector RS *and* strong broad-market RS = real alpha; flat sector RS with strong broad RS = sector-carry. When `sector_benchmark` is absent there's no mapping for this ticker — fall back to the broad index reading.
 
 **Fundamentals** (`fundamentals.*`)
 
@@ -102,17 +103,17 @@ Combine the brief's indicators with the news. Use these heuristics:
 - `peg_ratio < 1.0`: growth at a reasonable price.
 - `debt_to_equity > 200`: balance-sheet red flag — lean toward SELL on weakness, avoid BUY-the-dip.
 - `fcf_yield_pct > 5`: quality-on-sale signal (real cash flow relative to market cap).
-- All-null block = yfinance had no fundamentals data (common for non-US listings or ETFs).
+- `fundamentals: null` (or block omitted) = no fundamentals data (common for non-US listings or ETFs); skip this gate.
 
 **Insider activity** (`insider.*`, last 90 days)
 
 - Net positive `net_dollars_90d` with low `sell_count_90d`: insiders are conviction buyers; supportive of BUY.
 - Cluster of sells (high `sell_count_90d`, deeply negative `net_dollars_90d`): supportive of SELL even on neutral technicals.
-- Null block = yfinance had no insider data (very common for non-US tickers).
+- `insider: null` (or block omitted) = no insider data this run; skip this gate. (Source is yfinance first, with SEC EDGAR Form 4 as fallback for US listings.)
 
 **Implied earnings move** (`earnings_implied_move.*`)
 
-- Present only when `days_until_earnings ≤ 14`.
+- Block is `null` (or omitted) unless `days_until_earnings ≤ 14`.
 - The market is *already* pricing a move of `implied_move_pct`; a directional call needs to outpace this to be profitable on average. Size confidence accordingly.
 - High `atm_call_iv` / `atm_put_iv` (>60): unusually wide pricing range — Street sees catalyst risk both ways. Default toward HOLD.
 

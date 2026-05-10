@@ -21,7 +21,6 @@ from .models import (
 
 DEFAULT_BRIEF_PATH = "/tmp/stock-analysis-brief.json"
 
-_RECENT_CLOSES = 10
 _LOOKBACK_52W = 252
 _VOLUME_AVG_DAYS = 20
 
@@ -106,56 +105,52 @@ def _serialize_signal_history(history: list[SignalRecord] | None) -> list[dict[s
     return out
 
 
-_FUNDAMENTAL_NULL: dict[str, Any] = {
-    "trailing_pe": None,
-    "forward_pe": None,
-    "peg_ratio": None,
-    "price_to_book": None,
-    "ev_to_ebitda": None,
-    "dividend_yield_pct": None,
-    "market_cap": None,
-    "debt_to_equity": None,
-    "profit_margin_pct": None,
-    "roe_pct": None,
-    "fcf_yield_pct": None,
-}
+_FUNDAMENTAL_KEYS: tuple[str, ...] = (
+    "trailing_pe",
+    "forward_pe",
+    "peg_ratio",
+    "price_to_book",
+    "ev_to_ebitda",
+    "dividend_yield_pct",
+    "market_cap",
+    "debt_to_equity",
+    "profit_margin_pct",
+    "roe_pct",
+    "fcf_yield_pct",
+)
 
-_INSIDER_NULL: dict[str, Any] = {
-    "net_dollars_90d": None,
-    "buy_count_90d": None,
-    "sell_count_90d": None,
-    "net_share_pct": None,
-}
-
-_IMPLIED_MOVE_NULL: dict[str, Any] = {
-    "implied_move_pct": None,
-    "expiration_date": None,
-    "atm_call_iv": None,
-    "atm_put_iv": None,
-}
+_INSIDER_KEYS: tuple[str, ...] = (
+    "net_dollars_90d",
+    "buy_count_90d",
+    "sell_count_90d",
+    "net_share_pct",
+)
 
 
-def _fundamentals_block(f: Fundamentals | None) -> dict[str, Any]:
+def _fundamentals_block(f: Fundamentals | None) -> dict[str, Any] | None:
     if f is None:
-        return dict(_FUNDAMENTAL_NULL)
-    return {k: getattr(f, k) for k in _FUNDAMENTAL_NULL}
+        return None
+    block = {k: getattr(f, k) for k in _FUNDAMENTAL_KEYS}
+    return block if any(v is not None for v in block.values()) else None
 
 
-def _insider_block(i: InsiderActivity | None) -> dict[str, Any]:
+def _insider_block(i: InsiderActivity | None) -> dict[str, Any] | None:
     if i is None:
-        return dict(_INSIDER_NULL)
-    return {k: getattr(i, k) for k in _INSIDER_NULL}
+        return None
+    block = {k: getattr(i, k) for k in _INSIDER_KEYS}
+    return block if any(v is not None for v in block.values()) else None
 
 
-def _implied_move_block(m: EarningsImpliedMove | None) -> dict[str, Any]:
+def _implied_move_block(m: EarningsImpliedMove | None) -> dict[str, Any] | None:
     if m is None:
-        return dict(_IMPLIED_MOVE_NULL)
-    return {
+        return None
+    block = {
         "implied_move_pct": m.implied_move_pct,
         "expiration_date": m.expiration_date.isoformat() if m.expiration_date else None,
         "atm_call_iv": m.atm_call_iv,
         "atm_put_iv": m.atm_put_iv,
     }
+    return block if any(v is not None for v in block.values()) else None
 
 
 def _realtime_fields(rt: RealtimeQuote | None) -> dict[str, Any]:
@@ -208,11 +203,18 @@ def _relative_strength_fields(rs: dict | None) -> dict[str, Any]:
             "baseline_pct_change_30d": None,
             "relative_strength_30d_pct": None,
         }
-    return {
+    out: dict[str, Any] = {
         "baseline_index": rs.get("baseline_index"),
         "baseline_pct_change_30d": rs.get("baseline_pct_change_30d"),
         "relative_strength_30d_pct": rs.get("relative_strength_30d_pct"),
     }
+    # Sector-ETF relative strength is optional — only emit when run_analysis
+    # supplied a mapping for this ticker, otherwise the keys stay absent.
+    if "sector_benchmark" in rs:
+        out["sector_benchmark"] = rs.get("sector_benchmark")
+        out["sector_pct_change_30d"] = rs.get("sector_pct_change_30d")
+        out["sector_relative_strength_30d_pct"] = rs.get("sector_relative_strength_30d_pct")
+    return out
 
 
 def _days_until(d: date | datetime | None) -> int | None:
@@ -274,7 +276,6 @@ def build_holding_section(
     implied_move: EarningsImpliedMove | None = None,
     position_weight_pct: float | None = None,
 ) -> dict[str, Any]:
-    closes = prices["Close"].astype(float).tail(_RECENT_CLOSES).tolist()
     current_price = float(prices["Close"].astype(float).iloc[-1])
 
     cost_basis, current_value, pnl, pnl_pct = _pnl(
@@ -300,7 +301,6 @@ def build_holding_section(
         "pnl_pct": pnl_pct,
         "currency": holding.currency,
         "price_change_30d_pct": indicators.pct_change_30d,
-        "recent_closes": [float(c) for c in closes],
         "indicators": ind,
         **_high_low_52w(prices, current_price),
         **_volume_context(prices),

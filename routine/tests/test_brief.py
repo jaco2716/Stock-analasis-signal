@@ -229,6 +229,25 @@ def test_relative_strength_serializes_top_level() -> None:
     assert section["baseline_index"] == "^OMXC25"
     assert section["baseline_pct_change_30d"] == -1.4
     assert section["relative_strength_30d_pct"] == 4.7
+    # Sector keys are absent when no mapping was supplied.
+    assert "sector_benchmark" not in section
+
+
+def test_sector_relative_strength_fields_emitted() -> None:
+    rs = {
+        "baseline_index": "^GSPC",
+        "baseline_pct_change_30d": 14.2,
+        "relative_strength_30d_pct": 12.0,
+        "sector_benchmark": "SMH",
+        "sector_pct_change_30d": 22.0,
+        "sector_relative_strength_30d_pct": 4.2,
+    }
+    section = brief.build_holding_section(
+        _holding(), _prices(), _indicators(), relative_strength=rs
+    )
+    assert section["sector_benchmark"] == "SMH"
+    assert section["sector_pct_change_30d"] == 22.0
+    assert section["sector_relative_strength_30d_pct"] == 4.2
 
 
 def test_next_earnings_date_and_days_until() -> None:
@@ -278,10 +297,52 @@ def test_fundamentals_block_populated() -> None:
     assert f["dividend_yield_pct"] == 2.0
 
 
-def test_fundamentals_block_defaults_to_nulls() -> None:
+def test_fundamentals_block_defaults_to_none() -> None:
     section = brief.build_holding_section(_holding(), _prices(), _indicators())
-    f = section["fundamentals"]
-    assert all(f[k] is None for k in f)
+    assert section["fundamentals"] is None
+
+
+def test_insider_block_defaults_to_none() -> None:
+    section = brief.build_holding_section(_holding(), _prices(), _indicators())
+    assert section["insider"] is None
+
+
+def test_implied_move_block_defaults_to_none() -> None:
+    section = brief.build_holding_section(_holding(), _prices(), _indicators())
+    assert section["earnings_implied_move"] is None
+
+
+def test_blocks_collapse_when_all_subfields_null() -> None:
+    empty_funda = Fundamentals(
+        trailing_pe=None,
+        forward_pe=None,
+        peg_ratio=None,
+        price_to_book=None,
+        ev_to_ebitda=None,
+        dividend_yield_pct=None,
+        market_cap=None,
+        debt_to_equity=None,
+        profit_margin_pct=None,
+        roe_pct=None,
+        fcf_yield_pct=None,
+    )
+    empty_insider = InsiderActivity(
+        net_dollars_90d=None, buy_count_90d=None, sell_count_90d=None, net_share_pct=None
+    )
+    section = brief.build_holding_section(
+        _holding(),
+        _prices(),
+        _indicators(),
+        fundamentals=empty_funda,
+        insider=empty_insider,
+    )
+    assert section["fundamentals"] is None
+    assert section["insider"] is None
+
+
+def test_recent_closes_field_removed() -> None:
+    section = brief.build_holding_section(_holding(), _prices(), _indicators())
+    assert "recent_closes" not in section
 
 
 def test_insider_block_populated() -> None:

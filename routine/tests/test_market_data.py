@@ -359,6 +359,8 @@ def test_get_insider_activity_filters_to_90d_and_sums_dollars(
 def test_get_insider_activity_handles_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     market_data.clear_cache()
     monkeypatch.setattr(market_data.yf, "Ticker", lambda t: _FakeTicker(insider_frame=None))
+    # Stub out the EDGAR fallback so the test doesn't hit the network.
+    monkeypatch.setattr(market_data, "_get_insider_activity_edgar", lambda ticker: None)
     assert market_data.get_insider_activity("NADA") is None
 
 
@@ -367,7 +369,120 @@ def test_get_insider_activity_swallows_exceptions(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(
         market_data.yf, "Ticker", lambda t: _FakeTicker(raises=RuntimeError("rate limited"))
     )
+    monkeypatch.setattr(market_data, "_get_insider_activity_edgar", lambda ticker: None)
     assert market_data.get_insider_activity("ERR") is None
+
+
+def test_get_insider_activity_skips_edgar_for_non_us_ticker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    market_data.clear_cache()
+    monkeypatch.setattr(market_data.yf, "Ticker", lambda t: _FakeTicker(insider_frame=None))
+
+    called: dict[str, bool] = {"hit": False}
+
+    def _should_not_be_called(ticker: str):  # pragma: no cover - guard
+        called["hit"] = True
+        return None
+
+    monkeypatch.setattr(market_data, "_get_insider_activity_edgar", _should_not_be_called)
+    assert market_data.get_insider_activity("MAERSK-B.CO") is None
+    assert called["hit"] is False, "EDGAR fallback should not run for .CO ticker"
+
+
+# ------------------------- EDGAR fallback -----------------------------------
+
+
+class _FakeResp:
+    def __init__(self, *, json_body: Any = None, content: bytes = b"", status: int = 200) -> None:
+        self._json = json_body
+        self.content = content
+        self.status_code = status
+
+    def json(self) -> Any:
+        return self._json
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+
+_SAMPLE_FORM4_XML = b"""<?xml version="1.0"?>
+<ownershipDocument>
+  <nonDerivativeTable>
+    <nonDerivativeTransaction>
+      <transactionAmounts>
+        <transactionShares><value>1000</value></transactionShares>
+        <transactionPricePerShare><value>50.00</value></transactionPricePerShare>
+      </transactionAmounts>
+      <transactionCoding>
+        <transactionCode>S</transactionCode>
+      </transactionCoding>
+    </nonDerivativeTransaction>
+    <nonDerivativeTransaction>
+      <transactionAmounts>
+        <transactionShares><value>200</value></transactionShares>
+        <transactionPricePerShare><value>50.00</value></transactionPricePerShare>
+      </transactionAmounts>
+      <transactionCoding>
+        <transactionCode>P</transactionCode>
+      </transactionCoding>
+    </nonDerivativeTransaction>
+  </nonDerivativeTable>
+</ownershipDocument>
+"""
+
+
+def test_edgar_fallback_aggregates_form4(monkeypatch: pytest.MonkeyPatch) -> None:
+    market_data.clear_cache()
+    today = datetime.now(timezone.utc).date().isoformat()
+
+    def fake_get(url: str, **_: Any) -> _FakeResp:
+        if "company_tickers.json" in url:
+            return _FakeResp(json_body={"0": {"ticker": "ABC", "cik_str": 1234}})
+        if "submissions/CIK" in url:
+            return _FakeResp(
+                json_body={
+                    "filings": {
+                        "recent": {
+                            "form": ["4", "8-K", "4"],
+                            "accessionNumber": ["0001-23-456789", "0001-23-000001", "0001-23-456788"],
+                            "filingDate": [today, today, today],
+                            "primaryDocument": ["form4.xml", "8k.htm", "form4_b.xml"],
+                        }
+                    }
+                }
+            )
+        if "Archives/edgar/data/" in url:
+            return _FakeResp(content=_SAMPLE_FORM4_XML)
+        return _FakeResp(status=404)
+
+    monkeypatch.setattr(market_data.yf, "Ticker", lambda t: _FakeTicker(insider_frame=None, info={"sharesOutstanding": 100_000_000.0}))
+    monkeypatch.setattr(market_data.requests, "get", fake_get)
+
+    a = market_data.get_insider_activity("ABC")
+    assert a is not None
+    # Two Form 4 filings × (1 sell of 1000 @ $50 + 1 buy of 200 @ $50) per filing
+    # = 2 sells (2×$50,000 = $100,000) + 2 buys (2×$10,000 = $20,000); net −$80,000.
+    assert a.buy_count_90d == 2
+    assert a.sell_count_90d == 2
+    assert a.net_dollars_90d == pytest.approx(-80_000.0, abs=1e-2)
+    # Net shares = (200 + 200) - (1000 + 1000) = -1600; /100M * 100 = -0.0016%
+    assert a.net_share_pct == pytest.approx(-0.0016, abs=1e-6)
+
+
+def test_edgar_fallback_returns_none_when_cik_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    market_data.clear_cache()
+    monkeypatch.setattr(market_data.yf, "Ticker", lambda t: _FakeTicker(insider_frame=None))
+    monkeypatch.setattr(
+        market_data.requests,
+        "get",
+        lambda url, **_: _FakeResp(json_body={"0": {"ticker": "ABC", "cik_str": 1234}}),
+    )
+    # Ticker NOT in the CIK map → EDGAR returns None.
+    assert market_data.get_insider_activity("UNKNOWN") is None
 
 
 # ----------------------------- implied move --------------------------------

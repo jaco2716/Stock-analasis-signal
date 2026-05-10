@@ -301,6 +301,23 @@ def cmd_prepare(args: argparse.Namespace) -> int:
                     ),
                 }
 
+                sector_etf = market_data.get_sector_etf_for_ticker(holding.ticker)
+                if sector_etf is not None:
+                    sector_prices = market_data.get_price_history(sector_etf, period="2y")
+                    sector_pct_30d = technicals.pct_change_30d_from_frame(sector_prices)
+                    sector_rs_pct = (
+                        indicators.pct_change_30d - sector_pct_30d
+                        if indicators.pct_change_30d is not None and sector_pct_30d is not None
+                        else None
+                    )
+                    relative_strength["sector_benchmark"] = sector_etf
+                    relative_strength["sector_pct_change_30d"] = (
+                        round(sector_pct_30d, 3) if sector_pct_30d is not None else None
+                    )
+                    relative_strength["sector_relative_strength_30d_pct"] = (
+                        round(sector_rs_pct, 3) if sector_rs_pct is not None else None
+                    )
+
                 holding_sections.append(
                     brief.build_holding_section(
                         holding,
