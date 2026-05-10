@@ -119,21 +119,27 @@ To extend **what data** the model sees, add fields to the brief in `routine/lib/
 Pure SQL; no code or redeploy needed.
 
 ```sql
--- Add an owned holding to the default profile (qty + per-share buy price)
-insert into portfolio_holdings (profile_id, ticker, name, quantity, avg_buy_price_dkk, kind)
-select id, 'ORSTED.CO', 'Orsted', 100, 250.00, 'owned'
+-- Add an owned holding to the default profile (qty + per-share buy price in
+-- the holding's currency; `currency` defaults to 'DKK' if omitted).
+insert into portfolio_holdings (profile_id, ticker, name, quantity, avg_buy_price, currency, kind)
+select id, 'ORSTED.CO', 'Orsted', 100, 250.00, 'DKK', 'owned'
+from profiles where slug = 'default';
+
+-- USD-denominated example: enter avg_buy_price in USD and set currency='USD'.
+insert into portfolio_holdings (profile_id, ticker, name, quantity, avg_buy_price, currency, kind)
+select id, 'AAPL', 'Apple', 10, 175.00, 'USD', 'owned'
 from profiles where slug = 'default';
 
 -- Promote watchlist -> owned (delete the watchlist row, add owned)
 delete from portfolio_holdings
  where ticker = 'MAERSK-B.CO' and kind = 'watchlist';
-insert into portfolio_holdings (profile_id, ticker, name, quantity, avg_buy_price_dkk, kind)
-select id, 'MAERSK-B.CO', 'A.P. Moller - Maersk B', 25, 950.00, 'owned'
+insert into portfolio_holdings (profile_id, ticker, name, quantity, avg_buy_price, currency, kind)
+select id, 'MAERSK-B.CO', 'A.P. Moller - Maersk B', 25, 950.00, 'DKK', 'owned'
 from profiles where slug = 'default';
 
 -- Update qty and/or avg buy price for an existing owned holding
 update portfolio_holdings
-   set quantity = 60, avg_buy_price_dkk = 770.00
+   set quantity = 60, avg_buy_price = 770.00
  where ticker = 'NOVO-B.CO' and kind = 'owned' and profile_id = '<id>';
 
 -- Remove

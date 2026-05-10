@@ -72,7 +72,8 @@ export type Database = {
       portfolio_holdings: {
         Row: {
           added_at: string
-          avg_buy_price_dkk: number | null
+          avg_buy_price: number | null
+          currency: string
           id: string
           kind: Database["public"]["Enums"]["holding_kind"]
           name: string | null
@@ -83,7 +84,8 @@ export type Database = {
         }
         Insert: {
           added_at?: string
-          avg_buy_price_dkk?: number | null
+          avg_buy_price?: number | null
+          currency?: string
           id?: string
           kind: Database["public"]["Enums"]["holding_kind"]
           name?: string | null
@@ -94,7 +96,8 @@ export type Database = {
         }
         Update: {
           added_at?: string
-          avg_buy_price_dkk?: number | null
+          avg_buy_price?: number | null
+          currency?: string
           id?: string
           kind?: Database["public"]["Enums"]["holding_kind"]
           name?: string | null

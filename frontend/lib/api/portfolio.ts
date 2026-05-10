@@ -31,7 +31,11 @@ export const insertHolding = async (input: NewHolding): Promise<Holding> => {
 
 export const updateHolding = async (
   id: string,
-  patch: { quantity: number | null; avg_buy_price_dkk: number | null },
+  patch: {
+    quantity: number | null;
+    avg_buy_price: number | null;
+    currency?: string;
+  },
 ): Promise<Holding> => {
   const supabase = createServiceClient();
   const { data, error } = await supabase

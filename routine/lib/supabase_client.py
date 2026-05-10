@@ -71,11 +71,12 @@ def get_holdings(profile_id: UUID) -> list[Holding]:
             ticker=r["ticker"],
             name=r["name"],
             quantity=float(r["quantity"]) if r.get("quantity") is not None else None,
-            avg_buy_price_dkk=(
-                float(r["avg_buy_price_dkk"])
-                if r.get("avg_buy_price_dkk") is not None
+            avg_buy_price=(
+                float(r["avg_buy_price"])
+                if r.get("avg_buy_price") is not None
                 else None
             ),
+            currency=(r.get("currency") or "DKK").upper(),
             kind=r["kind"],
         )
         for r in rows

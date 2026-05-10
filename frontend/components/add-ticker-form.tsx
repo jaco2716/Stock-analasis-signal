@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
@@ -24,8 +24,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { addHolding } from "@/app/_actions/holdings";
+import { addHolding, lookupTickerCurrency } from "@/app/_actions/holdings";
 import type { HoldingKind } from "@/lib/types";
+
+const COMMON_CURRENCIES = ["DKK", "USD", "EUR", "GBP", "SEK", "NOK"] as const;
+const DEFAULT_CURRENCY = "DKK";
 
 const positiveOptionalNumber = z
   .string()
@@ -43,7 +46,12 @@ const formSchema = z
     name: z.string().trim().max(200).optional(),
     kind: z.enum(["owned", "watchlist"]),
     quantity: positiveOptionalNumber,
-    avg_buy_price_dkk: positiveOptionalNumber,
+    avg_buy_price: positiveOptionalNumber,
+    currency: z
+      .string()
+      .trim()
+      .toUpperCase()
+      .regex(/^[A-Z]{3}$/, "3-letter ISO code"),
   })
   .superRefine((v, ctx) => {
     if (v.kind !== "owned") return;
@@ -54,10 +62,10 @@ const formSchema = z
         message: "Quantity is required for owned holdings",
       });
     }
-    if (!Number.isFinite(v.avg_buy_price_dkk) || (v.avg_buy_price_dkk ?? 0) <= 0) {
+    if (!Number.isFinite(v.avg_buy_price) || (v.avg_buy_price ?? 0) <= 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ["avg_buy_price_dkk"],
+        path: ["avg_buy_price"],
         message: "Avg buy price is required for owned holdings",
       });
     }
@@ -76,6 +84,9 @@ export const AddTickerForm = ({
 }: AddTickerFormProps) => {
   const [pending, startTransition] = useTransition();
   const [kind, setKind] = useState<HoldingKind>("owned");
+  // Track whether the user has manually picked a currency. Only auto-prefill
+  // from yfinance when they haven't, so we never overwrite their explicit choice.
+  const currencyTouchedRef = useRef(false);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -84,7 +95,8 @@ export const AddTickerForm = ({
       name: "",
       kind: "owned",
       quantity: "",
-      avg_buy_price_dkk: "",
+      avg_buy_price: "",
+      currency: DEFAULT_CURRENCY,
     },
   });
 
@@ -92,7 +104,7 @@ export const AddTickerForm = ({
     startTransition(async () => {
       const isOwned = values.kind === "owned";
       const qty = Number(values.quantity);
-      const avg = Number(values.avg_buy_price_dkk);
+      const avg = Number(values.avg_buy_price);
       const result = await addHolding({
         profileId,
         profileSlug,
@@ -100,16 +112,19 @@ export const AddTickerForm = ({
         name: values.name?.trim() ? values.name : undefined,
         kind: values.kind,
         quantity: isOwned && Number.isFinite(qty) ? qty : undefined,
-        avg_buy_price_dkk: isOwned && Number.isFinite(avg) ? avg : undefined,
+        avg_buy_price: isOwned && Number.isFinite(avg) ? avg : undefined,
+        currency: values.currency,
       });
       if (result.ok) {
         toast.success(`Added ${values.ticker.toUpperCase()}`);
+        currencyTouchedRef.current = false;
         form.reset({
           ticker: "",
           name: "",
           kind: values.kind,
           quantity: "",
-          avg_buy_price_dkk: "",
+          avg_buy_price: "",
+          currency: DEFAULT_CURRENCY,
         });
       } else {
         toast.error(result.error);
@@ -117,13 +132,28 @@ export const AddTickerForm = ({
     });
   };
 
+  const handleTickerBlur = async (rawTicker: string) => {
+    const ticker = rawTicker.trim().toUpperCase();
+    if (!ticker || currencyTouchedRef.current) return;
+    const result = await lookupTickerCurrency({ ticker });
+    if (result && !currencyTouchedRef.current) {
+      form.setValue("currency", result.currency, { shouldValidate: true });
+    }
+  };
+
   const ownedDisabled = kind !== "owned";
+  const currentCurrency = form.watch("currency") || DEFAULT_CURRENCY;
+  const currencyOptions = COMMON_CURRENCIES.includes(
+    currentCurrency as (typeof COMMON_CURRENCIES)[number],
+  )
+    ? [...COMMON_CURRENCIES]
+    : [...COMMON_CURRENCIES, currentCurrency];
 
   return (
     <Form {...form}>
       <form
         onSubmit={form.handleSubmit(onSubmit)}
-        className="grid grid-cols-1 gap-4 sm:grid-cols-6"
+        className="grid grid-cols-1 gap-4 sm:grid-cols-7"
       >
         <FormField
           control={form.control}
@@ -163,6 +193,10 @@ export const AddTickerForm = ({
                   placeholder="NOVO-B"
                   {...field}
                   onChange={(e) => field.onChange(e.target.value.toUpperCase())}
+                  onBlur={(e) => {
+                    field.onBlur();
+                    void handleTickerBlur(e.target.value);
+                  }}
                   className="font-mono uppercase"
                 />
               </FormControl>
@@ -207,10 +241,10 @@ export const AddTickerForm = ({
         />
         <FormField
           control={form.control}
-          name="avg_buy_price_dkk"
+          name="avg_buy_price"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Avg buy (DKK)</FormLabel>
+              <FormLabel>Avg buy ({currentCurrency})</FormLabel>
               <FormControl>
                 <Input
                   type="number"
@@ -223,6 +257,37 @@ export const AddTickerForm = ({
                 />
               </FormControl>
               <FormDescription>Per share.</FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={form.control}
+          name="currency"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Currency</FormLabel>
+              <Select
+                value={field.value}
+                onValueChange={(v) => {
+                  currencyTouchedRef.current = true;
+                  field.onChange(v);
+                }}
+              >
+                <FormControl>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                </FormControl>
+                <SelectContent>
+                  {currencyOptions.map((c) => (
+                    <SelectItem key={c} value={c}>
+                      {c}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <FormDescription>Auto-detected from ticker.</FormDescription>
               <FormMessage />
             </FormItem>
           )}

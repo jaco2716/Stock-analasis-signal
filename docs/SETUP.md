@@ -253,13 +253,19 @@ Locally you do not run the analysis loop yourself — that is the agent's job. I
 insert into profiles (name, slug, discord_webhook_url, is_active)
 values ('Aggressive', 'aggressive', 'https://discord.com/api/webhooks/...', true);
 
--- 2. Add holdings (quantity = shares held; avg_buy_price_dkk = per share)
-insert into portfolio_holdings (profile_id, ticker, name, quantity, avg_buy_price_dkk, kind)
-select id, 'ORSTED.CO', 'Orsted', 30, 250.00, 'owned'
+-- 2. Add holdings (quantity = shares held; avg_buy_price = per share, in the
+-- holding's currency). `currency` defaults to 'DKK' if omitted.
+insert into portfolio_holdings (profile_id, ticker, name, quantity, avg_buy_price, currency, kind)
+select id, 'ORSTED.CO', 'Orsted', 30, 250.00, 'DKK', 'owned'
 from profiles where slug = 'aggressive';
 
--- Watchlist row: leave quantity and avg_buy_price_dkk null
-insert into portfolio_holdings (profile_id, ticker, name, quantity, avg_buy_price_dkk, kind)
+-- US-listed example: native price comes from yfinance in USD.
+insert into portfolio_holdings (profile_id, ticker, name, quantity, avg_buy_price, currency, kind)
+select id, 'AAPL', 'Apple', 10, 175.00, 'USD', 'owned'
+from profiles where slug = 'aggressive';
+
+-- Watchlist row: leave quantity and avg_buy_price null
+insert into portfolio_holdings (profile_id, ticker, name, quantity, avg_buy_price, kind)
 select id, 'CARLB.CO', 'Carlsberg B', null, null, 'watchlist'
 from profiles where slug = 'aggressive';
 ```

@@ -1,11 +1,24 @@
+export const formatMoney = (
+  n: number | null | undefined,
+  currency: string,
+): string => {
+  if (n == null) return "—";
+  try {
+    return new Intl.NumberFormat("da-DK", {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 0,
+    }).format(n);
+  } catch {
+    // Intl rejects non-ISO codes; fall back to plain number + suffix.
+    return `${new Intl.NumberFormat("da-DK", {
+      maximumFractionDigits: 0,
+    }).format(n)} ${currency}`;
+  }
+};
+
 export const formatDKK = (n: number | null | undefined): string =>
-  n == null
-    ? "—"
-    : new Intl.NumberFormat("da-DK", {
-        style: "currency",
-        currency: "DKK",
-        maximumFractionDigits: 0,
-      }).format(n);
+  formatMoney(n, "DKK");
 
 export const formatPercent = (n: number | null | undefined): string =>
   n == null

@@ -28,7 +28,8 @@ Tickers attached to a profile, either owned (with quantity + average buy price) 
 | `ticker` | `text` | Copenhagen-suffixed, e.g. `NOVO-B.CO` |
 | `name` | `text` nullable | Human-readable |
 | `quantity` | `numeric(18,6)` nullable | Shares held; required when `kind = 'owned'` (CHECK constraint). Six decimals for fractional shares. |
-| `avg_buy_price_dkk` | `numeric(14,4)` nullable | Per-share cost in DKK; required when `kind = 'owned'`. Four decimals for sub-DKK precision. |
+| `avg_buy_price` | `numeric(14,4)` nullable | Per-share cost in the holding's `currency`; required when `kind = 'owned'`. Four decimals for sub-unit precision. |
+| `currency` | `text` not null, default `'DKK'` | ISO 4217 3-letter code (CHECK `~ '^[A-Z]{3}$'`). The unit for `avg_buy_price` and the derived cost basis / P&L. yfinance returns `current_price` in the security's native currency, which should match this. |
 | `kind` | `holding_kind` enum | `owned` \| `watchlist` |
 | `added_at` / `updated_at` | `timestamptz` | |
 

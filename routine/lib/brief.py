@@ -39,7 +39,10 @@ def _macd_histogram(indicators: Indicators) -> float | None:
 def _pnl(
     quantity: float | None, avg_buy: float | None, current_price: float
 ) -> tuple[float | None, float | None, float | None, float | None]:
-    """Return (cost_basis_dkk, current_value_dkk, pnl_dkk, pnl_pct) — all None for watchlist."""
+    """Return (cost_basis, current_value, pnl, pnl_pct) — all None for watchlist.
+
+    All monetary values are in the holding's currency; this function does no FX.
+    """
     if quantity is None or avg_buy is None:
         return None, None, None, None
     cost_basis = quantity * avg_buy
@@ -60,8 +63,8 @@ def build_holding_section(
     closes = prices["Close"].astype(float).tail(_RECENT_CLOSES).tolist()
     current_price = float(prices["Close"].astype(float).iloc[-1])
 
-    cost_basis, current_value, pnl_dkk, pnl_pct = _pnl(
-        holding.quantity, holding.avg_buy_price_dkk, current_price
+    cost_basis, current_value, pnl, pnl_pct = _pnl(
+        holding.quantity, holding.avg_buy_price, current_price
     )
 
     ind = asdict(indicators)
@@ -74,13 +77,13 @@ def build_holding_section(
         "name": holding.name,
         "kind": holding.kind,
         "quantity": holding.quantity,
-        "avg_buy_price_dkk": holding.avg_buy_price_dkk,
-        "cost_basis_dkk": cost_basis,
+        "avg_buy_price": holding.avg_buy_price,
+        "cost_basis": cost_basis,
         "current_price": current_price,
-        "current_value_dkk": current_value,
-        "pnl_dkk": pnl_dkk,
+        "current_value": current_value,
+        "pnl": pnl,
         "pnl_pct": pnl_pct,
-        "currency": "DKK",
+        "currency": holding.currency,
         "price_change_30d_pct": indicators.pct_change_30d,
         "recent_closes": [float(c) for c in closes],
         "indicators": ind,

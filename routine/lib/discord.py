@@ -24,9 +24,10 @@ class HoldingContext:
     """Per-holding numbers needed by the embed; all None for watchlist."""
 
     quantity: float | None
-    cost_basis_dkk: float | None
-    current_value_dkk: float | None
+    cost_basis: float | None
+    current_value: float | None
     pnl_pct: float | None
+    currency: str
     is_watchlist: bool
 
 
@@ -34,7 +35,7 @@ def _truncate(text: str, n: int) -> str:
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
-def _fmt_dkk(n: float | None) -> str:
+def _fmt_money(n: float | None) -> str:
     return "n/a" if n is None else f"{n:,.0f}".replace(",", ".")
 
 
@@ -56,14 +57,14 @@ def _position_fields(ctx: HoldingContext) -> list[dict]:
     if ctx.is_watchlist:
         return [{"name": "Position", "value": "Watchlist", "inline": True}]
     now_value = (
-        f"{_fmt_dkk(ctx.current_value_dkk)} ({_fmt_pnl_pct(ctx.pnl_pct)})"
-        if ctx.current_value_dkk is not None
+        f"{_fmt_money(ctx.current_value)} ({_fmt_pnl_pct(ctx.pnl_pct)})"
+        if ctx.current_value is not None
         else "n/a"
     )
     return [
         {"name": "Qty", "value": _fmt_qty(ctx.quantity), "inline": True},
-        {"name": "Cost (DKK)", "value": _fmt_dkk(ctx.cost_basis_dkk), "inline": True},
-        {"name": "Now (DKK)", "value": now_value, "inline": True},
+        {"name": f"Cost ({ctx.currency})", "value": _fmt_money(ctx.cost_basis), "inline": True},
+        {"name": f"Now ({ctx.currency})", "value": now_value, "inline": True},
     ]
 
 
@@ -82,7 +83,7 @@ def build_payload(
     price = f"{indicators.last_close:.2f}"
 
     fields: list[dict] = [
-        {"name": "Price (DKK)", "value": price, "inline": True},
+        {"name": f"Price ({ctx.currency})", "value": price, "inline": True},
         {"name": "RSI14", "value": rsi, "inline": True},
         *_position_fields(ctx),
         {"name": "Confidence", "value": f"{signal.confidence * 100:.0f}%", "inline": True},

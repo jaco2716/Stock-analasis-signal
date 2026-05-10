@@ -14,7 +14,7 @@ import {
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { EditHoldingDialog } from "@/components/edit-holding-dialog";
 import { removeHolding } from "@/app/_actions/holdings";
-import { formatDKK, formatQuantity } from "@/lib/format";
+import { formatMoney, formatQuantity } from "@/lib/format";
 import type { Holding } from "@/lib/types";
 
 interface PortfolioTableProps {
@@ -23,8 +23,8 @@ interface PortfolioTableProps {
 }
 
 const costBasis = (h: Holding): number | null =>
-  h.quantity != null && h.avg_buy_price_dkk != null
-    ? h.quantity * h.avg_buy_price_dkk
+  h.quantity != null && h.avg_buy_price != null
+    ? h.quantity * h.avg_buy_price
     : null;
 
 export const PortfolioTable = ({
@@ -46,7 +46,7 @@ export const PortfolioTable = ({
           <TableHead>Ticker</TableHead>
           <TableHead>Name</TableHead>
           <TableHead className="text-right">Qty</TableHead>
-          <TableHead className="text-right">Avg buy (DKK)</TableHead>
+          <TableHead className="text-right">Avg buy</TableHead>
           <TableHead className="text-right">Cost basis</TableHead>
           <TableHead className="w-[120px] text-right">Actions</TableHead>
         </TableRow>
@@ -57,8 +57,12 @@ export const PortfolioTable = ({
             <TableCell className="font-mono font-medium">{h.ticker}</TableCell>
             <TableCell>{h.name}</TableCell>
             <TableCell className="text-right">{formatQuantity(h.quantity)}</TableCell>
-            <TableCell className="text-right">{formatDKK(h.avg_buy_price_dkk)}</TableCell>
-            <TableCell className="text-right">{formatDKK(costBasis(h))}</TableCell>
+            <TableCell className="text-right">
+              {formatMoney(h.avg_buy_price, h.currency)}
+            </TableCell>
+            <TableCell className="text-right">
+              {formatMoney(costBasis(h), h.currency)}
+            </TableCell>
             <TableCell className="text-right">
               <div className="flex justify-end gap-1">
                 <EditHoldingDialog
@@ -66,7 +70,8 @@ export const PortfolioTable = ({
                   ticker={h.ticker}
                   profileSlug={profileSlug}
                   currentQuantity={h.quantity}
-                  currentAvgBuyPriceDkk={h.avg_buy_price_dkk}
+                  currentAvgBuyPrice={h.avg_buy_price}
+                  currentCurrency={h.currency}
                 />
                 <ConfirmDialog
                   trigger={

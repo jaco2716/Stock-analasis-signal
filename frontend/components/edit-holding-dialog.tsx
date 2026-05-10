@@ -16,14 +16,24 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { updateHoldingAction } from "@/app/_actions/holdings";
+
+const COMMON_CURRENCIES = ["DKK", "USD", "EUR", "GBP", "SEK", "NOK"] as const;
 
 interface EditHoldingDialogProps {
   holdingId: string;
   ticker: string;
   profileSlug: string;
   currentQuantity: number | null;
-  currentAvgBuyPriceDkk: number | null;
+  currentAvgBuyPrice: number | null;
+  currentCurrency: string;
 }
 
 export const EditHoldingDialog = ({
@@ -31,16 +41,24 @@ export const EditHoldingDialog = ({
   ticker,
   profileSlug,
   currentQuantity,
-  currentAvgBuyPriceDkk,
+  currentAvgBuyPrice,
+  currentCurrency,
 }: EditHoldingDialogProps) => {
   const [open, setOpen] = useState(false);
   const [quantity, setQuantity] = useState(
     currentQuantity == null ? "" : String(currentQuantity),
   );
   const [avgBuy, setAvgBuy] = useState(
-    currentAvgBuyPriceDkk == null ? "" : String(currentAvgBuyPriceDkk),
+    currentAvgBuyPrice == null ? "" : String(currentAvgBuyPrice),
   );
+  const [currency, setCurrency] = useState(currentCurrency.toUpperCase());
   const [pending, startTransition] = useTransition();
+
+  const currencyOptions = COMMON_CURRENCIES.includes(
+    currency as (typeof COMMON_CURRENCIES)[number],
+  )
+    ? [...COMMON_CURRENCIES]
+    : [...COMMON_CURRENCIES, currency];
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -54,12 +72,17 @@ export const EditHoldingDialog = ({
       toast.error("Avg buy price must be a positive number");
       return;
     }
+    if (!/^[A-Z]{3}$/.test(currency)) {
+      toast.error("Currency must be a 3-letter ISO code");
+      return;
+    }
     startTransition(async () => {
       const result = await updateHoldingAction({
         id: holdingId,
         profileSlug,
         quantity: parsedQty,
-        avg_buy_price_dkk: parsedAvg,
+        avg_buy_price: parsedAvg,
+        currency,
       });
       if (result.ok) {
         toast.success(`Updated ${ticker}`);
@@ -81,7 +104,8 @@ export const EditHoldingDialog = ({
         <DialogHeader>
           <DialogTitle>Edit holding — {ticker}</DialogTitle>
           <DialogDescription>
-            Update the share quantity and average buy price for this holding.
+            Update the share quantity, average buy price, and currency for this
+            holding.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -99,18 +123,35 @@ export const EditHoldingDialog = ({
               required
             />
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="avg_buy_price_dkk">Avg buy price (DKK)</Label>
-            <Input
-              id="avg_buy_price_dkk"
-              type="number"
-              inputMode="decimal"
-              min="0"
-              step="any"
-              value={avgBuy}
-              onChange={(e) => setAvgBuy(e.target.value)}
-              required
-            />
+          <div className="grid grid-cols-3 gap-3">
+            <div className="col-span-2 space-y-2">
+              <Label htmlFor="avg_buy_price">Avg buy price ({currency})</Label>
+              <Input
+                id="avg_buy_price"
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step="any"
+                value={avgBuy}
+                onChange={(e) => setAvgBuy(e.target.value)}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="currency">Currency</Label>
+              <Select value={currency} onValueChange={setCurrency}>
+                <SelectTrigger id="currency">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {currencyOptions.map((c) => (
+                    <SelectItem key={c} value={c}>
+                      {c}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <DialogFooter>
             <Button type="submit" disabled={pending}>

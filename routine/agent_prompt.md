@@ -68,11 +68,12 @@ Combine the brief's indicators with the news. Use these heuristics:
 For each owned holding the brief now exposes share-level economics:
 
 - `quantity` — shares held
-- `avg_buy_price_dkk` — per-share cost
-- `cost_basis_dkk` — `quantity × avg_buy_price_dkk`
+- `avg_buy_price` — per-share cost
+- `cost_basis` — `quantity × avg_buy_price`
 - `current_price` — last close from yfinance
-- `current_value_dkk` — `quantity × current_price`
-- `pnl_dkk`, `pnl_pct` — unrealized P&L
+- `current_value` — `quantity × current_price`
+- `pnl`, `pnl_pct` — unrealized P&L
+- `currency` — ISO code (e.g. `DKK`, `USD`, `EUR`). All monetary fields above are in this currency; the user entered `avg_buy_price` in this currency, and yfinance returned `current_price` in the security's native currency. **Do not mix currencies across holdings** — compare a holding's P&L only to its own cost basis, not to other holdings'.
 
 Apply per-kind decision rules:
 
@@ -81,9 +82,9 @@ Apply per-kind decision rules:
 - Default: `HOLD`.
 - `SELL` (lock in gain) when: `pnl_pct > +25%` **and** technicals weakening (RSI rolling over from >70, MACD bearish crossover, price losing SMA50). Confirming bad news raises confidence; absence of news lowers it but doesn't veto a clear technical signal at large unrealized gains.
 - `SELL` (cut loss) when: `pnl_pct < -15%` **and** trend continues bearish (price below all SMAs, MACD bearish, no catalyst for reversal). Don't average down on a deteriorating thesis.
-- `BUY` (add to position) when: bullish technicals + supportive news + the position is small relative to the rest of the profile (use `cost_basis_dkk` of other holdings as a rough yardstick).
+- `BUY` (add to position) when: bullish technicals + supportive news + the position is small relative to the rest of the profile (use `cost_basis` of other holdings as a rough yardstick — compare within the same currency only).
 - Within `±10%` P&L: technicals + news drive the call. P&L is not the deciding factor; small unrealized moves are noise.
-- Keep position size in mind: a 37,500 DKK cost basis near a known top is a different decision than a 3,750 DKK cost basis.
+- Keep position size in mind: a 37,500 cost basis near a known top is a different decision than a 3,750 cost basis (units = the holding's `currency`).
 
 **Watchlist holdings**
 
@@ -110,7 +111,7 @@ python -m run_analysis emit-signal \
   --ticker "$TICKER" \
   --signal "BUY|SELL|HOLD" \
   --confidence 0.75 \
-  --reasoning "RSI 28 from oversold, MACD bullish crossover yesterday, golden cross intact. Q1 earnings beat 6% on May 4 with raised guidance. Cost basis 5,000 DKK at -3% P&L; small position relative to rest of profile, so adding is reasonable."
+  --reasoning "RSI 28 from oversold, MACD bullish crossover yesterday, golden cross intact. Q1 earnings beat 6% on May 4 with raised guidance. Cost basis 5,000 DKK at -3% P&L; small position relative to rest of profile, so adding is reasonable. (Cite cost basis with the holding's currency code.)"
 ```
 
 **Reasoning discipline**: 2–3 sentences, citing **specific numbers from the brief** (RSI value, MACD direction, % change, P&L % for owned holdings) and **specific news items** (date + catalyst). No generic statements. Max ~600 chars to stay well under the 800-char DB limit and 1024-char Discord field limit.

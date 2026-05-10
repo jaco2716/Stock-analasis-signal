@@ -43,22 +43,24 @@ def _signal(stype: str = "BUY") -> Signal:
     )
 
 
-def _owned_ctx(pnl_pct: float = 12.3) -> discord.HoldingContext:
+def _owned_ctx(pnl_pct: float = 12.3, currency: str = "DKK") -> discord.HoldingContext:
     return discord.HoldingContext(
         quantity=50.0,
-        cost_basis_dkk=37500.0,
-        current_value_dkk=42125.0,
+        cost_basis=37500.0,
+        current_value=42125.0,
         pnl_pct=pnl_pct,
+        currency=currency,
         is_watchlist=False,
     )
 
 
-def _watch_ctx() -> discord.HoldingContext:
+def _watch_ctx(currency: str = "DKK") -> discord.HoldingContext:
     return discord.HoldingContext(
         quantity=None,
-        cost_basis_dkk=None,
-        current_value_dkk=None,
+        cost_basis=None,
+        current_value=None,
         pnl_pct=None,
+        currency=currency,
         is_watchlist=True,
     )
 
@@ -112,9 +114,10 @@ def test_build_payload_negative_pnl_sign() -> None:
         _indicators(),
         discord.HoldingContext(
             quantity=10.0,
-            cost_basis_dkk=10000.0,
-            current_value_dkk=8400.0,
+            cost_basis=10000.0,
+            current_value=8400.0,
             pnl_pct=-16.0,
+            currency="DKK",
             is_watchlist=False,
         ),
         using_fallback=False,

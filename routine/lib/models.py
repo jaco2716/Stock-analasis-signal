@@ -26,7 +26,8 @@ class Holding:
     ticker: str
     name: str
     quantity: float | None
-    avg_buy_price_dkk: float | None
+    avg_buy_price: float | None
+    currency: str
     kind: HoldingKind
 
 

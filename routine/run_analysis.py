@@ -185,9 +185,10 @@ def cmd_emit_signal(args: argparse.Namespace) -> int:
 
     ctx = discord.HoldingContext(
         quantity=holding_section.get("quantity"),
-        cost_basis_dkk=holding_section.get("cost_basis_dkk"),
-        current_value_dkk=holding_section.get("current_value_dkk"),
+        cost_basis=holding_section.get("cost_basis"),
+        current_value=holding_section.get("current_value"),
         pnl_pct=holding_section.get("pnl_pct"),
+        currency=(holding_section.get("currency") or "DKK"),
         is_watchlist=(holding_section.get("kind") == "watchlist"),
     )
     discord.post_signal(
