@@ -1,3 +1,4 @@
+import type { Route } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -147,7 +148,7 @@ const SignalsHistoryPage = async ({
             {page > 1 ? (
               <Button asChild variant="outline" size="sm">
                 <Link
-                  href={`/p/${profile.slug}/signals${baseQuery({ page: page - 1 || undefined })}`}
+                  href={`/p/${profile.slug}/signals${baseQuery({ page: page - 1 || undefined })}` as Route}
                 >
                   Previous
                 </Link>
@@ -160,7 +161,7 @@ const SignalsHistoryPage = async ({
             {page < totalPages ? (
               <Button asChild variant="outline" size="sm">
                 <Link
-                  href={`/p/${profile.slug}/signals${baseQuery({ page: page + 1 })}`}
+                  href={`/p/${profile.slug}/signals${baseQuery({ page: page + 1 })}` as Route}
                 >
                   Next
                 </Link>

@@ -5,7 +5,7 @@
 // server-only writes that intentionally bypass RLS (admin actions). Default
 // reads should use createServerClient(), which uses the anon key + cookies.
 
-import { createServerClient as createSSRServerClient } from "@supabase/ssr";
+import { createServerClient as createSSRServerClient, type CookieOptions } from "@supabase/ssr";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import type { Database } from "@/lib/database.types";
@@ -20,7 +20,7 @@ export const createServerClient = async () => {
         getAll() {
           return cookieStore.getAll();
         },
-        setAll(cookiesToSet) {
+        setAll(cookiesToSet: { name: string; value: string; options: CookieOptions }[]) {
           try {
             for (const { name, value, options } of cookiesToSet) {
               cookieStore.set(name, value, options);

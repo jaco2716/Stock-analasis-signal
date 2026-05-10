@@ -1,4 +1,4 @@
-import type { Database, HoldingKind, SignalType, AnalysisRunStatus } from "./database.types";
+import type { Database, Enums } from "./database.types";
 
 type Tables = Database["public"]["Tables"];
 
@@ -15,6 +15,8 @@ export type NewSignal = Tables["signals"]["Insert"];
 
 export type AnalysisRun = Tables["analysis_runs"]["Row"];
 
-export type { HoldingKind, SignalType, AnalysisRunStatus };
+export type HoldingKind = Enums<"holding_kind">;
+export type SignalType = Enums<"signal_type">;
+export type AnalysisRunStatus = Enums<"run_status">;
 
 export type ActionResult = { ok: true } | { ok: false; error: string };

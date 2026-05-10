@@ -7,11 +7,13 @@ export const formatDKK = (n: number | null | undefined): string =>
         maximumFractionDigits: 0,
       }).format(n);
 
-export const formatPercent = (n: number): string =>
-  new Intl.NumberFormat("da-DK", {
-    style: "percent",
-    maximumFractionDigits: 0,
-  }).format(n);
+export const formatPercent = (n: number | null | undefined): string =>
+  n == null
+    ? "—"
+    : new Intl.NumberFormat("da-DK", {
+        style: "percent",
+        maximumFractionDigits: 0,
+      }).format(n);
 
 export const formatQuantity = (n: number | null | undefined): string => {
   if (n == null) return "—";
