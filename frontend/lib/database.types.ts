@@ -149,8 +149,13 @@ export type Database = {
       signals: {
         Row: {
           confidence: number | null
+          currency: string | null
           generated_at: string
           id: string
+          outcome_computed_at: string | null
+          outcome_t30_pct: number | null
+          outcome_t5_pct: number | null
+          price_at_signal: number | null
           profile_id: string
           reasoning: string
           run_id: string | null
@@ -159,8 +164,13 @@ export type Database = {
         }
         Insert: {
           confidence?: number | null
+          currency?: string | null
           generated_at?: string
           id?: string
+          outcome_computed_at?: string | null
+          outcome_t30_pct?: number | null
+          outcome_t5_pct?: number | null
+          price_at_signal?: number | null
           profile_id: string
           reasoning: string
           run_id?: string | null
@@ -169,8 +179,13 @@ export type Database = {
         }
         Update: {
           confidence?: number | null
+          currency?: string | null
           generated_at?: string
           id?: string
+          outcome_computed_at?: string | null
+          outcome_t30_pct?: number | null
+          outcome_t5_pct?: number | null
+          price_at_signal?: number | null
           profile_id?: string
           reasoning?: string
           run_id?: string | null

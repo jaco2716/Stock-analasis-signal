@@ -53,6 +53,8 @@ class Signal:
     profile_id: UUID | None = None
     run_id: UUID | None = None
     generated_at: datetime = field(default_factory=datetime.utcnow)
+    price_at_signal: float | None = None
+    currency: str | None = None
 
 
 @dataclass(frozen=True)
@@ -67,6 +69,9 @@ class SignalRecord:
     id: UUID | None = None
     outcome_t5_pct: float | None = None
     outcome_t30_pct: float | None = None
+    price_at_signal: float | None = None
+    currency: str | None = None
+    profile_id: UUID | None = None
 
 
 @dataclass(frozen=True)

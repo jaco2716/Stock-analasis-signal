@@ -186,23 +186,51 @@ Configure these as agent-level secrets when the `schedule` skill prompts for the
 
 No `ANTHROPIC_API_KEY`. The agent's own session is the LLM; analysis cost is metered against your Claude Code subscription.
 
-### 5.2 Register the schedule
+### 5.2 Register the per-tick analysis agent
 
 From a Claude Code session in this project, invoke the `schedule` skill and provide:
 
 - **Cron**: `30 9,13,16 * * 1-5`
 - **Timezone**: `Europe/Copenhagen` (DST is honored automatically; the cron is wall-clock local)
-- **Prompt**: paste the full contents of `routine/agent_prompt.md`. That document is the canonical analysis prompt — methodology, decision rules, confidence calibration, and the three-step CLI flow (`prepare` → per-holding `emit-signal` → `finish-run`).
+- **Prompt** (paste verbatim — it's a thin wrapper that delegates to the canonical agent prompt in the repo, so updates to the methodology don't require touching the schedule):
 
-This produces three runs per weekday: 09:30, 13:30, 16:30 local time.
+  ```
+  You are the stock-analysis signal agent. The repo is already cloned into your session — your initial cwd is the repo root.
 
-### 5.3 First manual run
+  Read `routine/agent_prompt.md` and follow its instructions exactly. Do not read any other repo files for context; the agent_prompt + the brief from `prepare` are exhaustive.
+  ```
 
-From the `schedule` skill, trigger the routine once on demand to confirm the wiring. Then check:
+This produces three runs per weekday: 09:30, 13:30, 16:30 local time. The canonical methodology (RSI thresholds, decision rules, confidence calibration, the three-step `prepare` → `emit-signal` → `finish-run` flow) lives in `routine/agent_prompt.md` and is what the agent actually executes each tick.
+
+### 5.3 Register the nightly backfill agent
+
+A separate scheduled agent runs once nightly to backfill realized outcomes (T+5 / T+30) onto past signals and to fill missing `price_at_signal` rows. It does not depend on the per-tick agent — register it as its own schedule entry.
+
+From the `schedule` skill, provide:
+
+- **Cron**: `0 22 * * 1-5`
+- **Timezone**: `UTC` (after US market close — the routine sources prices from yfinance which reflects whatever the latest close is at fire time)
+- **Prompt** (paste verbatim):
+
+  ```
+  You are the nightly backfill agent for the stock-analysis-signal repo.
+  Your initial cwd is the repo root.
+
+  Read `routine/nightly_agent_prompt.md` and follow its instructions exactly.
+  Do not read any other repo files for context.
+  ```
+
+The command set the agent runs and the env vars it needs are documented in `routine/nightly_agent_prompt.md`. Update that file when the command set changes; the schedule registration itself stays untouched.
+
+### 5.4 First manual run
+
+From the `schedule` skill, trigger the per-tick routine once on demand to confirm the wiring. Then check:
 
 - `analysis_runs` has a new row with `status = 'success'`.
 - `signals` has one row per holding the agent decided on.
 - The Discord channel received an embed per signal as it was emitted (not all at once at the end).
+
+Trigger the nightly backfill once too — it should log `score-signals done: scored=… skipped=…` and `backfill-signal-prices done: written=… skipped=…` and exit cleanly.
 
 ---
 

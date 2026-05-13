@@ -58,12 +58,20 @@ const DashboardPage = async ({ params }: DashboardPageProps) => {
       <section className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-medium">Recent signals</h2>
-          <Link
-            href={`/p/${profile.slug}/signals`}
-            className="text-sm text-muted-foreground hover:text-foreground"
-          >
-            View all
-          </Link>
+          <div className="flex items-center gap-4">
+            <Link
+              href={`/p/${profile.slug}/backtest`}
+              className="text-sm text-muted-foreground hover:text-foreground"
+            >
+              Backtest
+            </Link>
+            <Link
+              href={`/p/${profile.slug}/signals`}
+              className="text-sm text-muted-foreground hover:text-foreground"
+            >
+              View all
+            </Link>
+          </div>
         </div>
         <SignalsFeed signals={signals} />
       </section>

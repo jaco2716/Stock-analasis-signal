@@ -103,6 +103,14 @@ def build_parser() -> argparse.ArgumentParser:
     score.add_argument("--dry-run", action="store_true", help="No Supabase update.")
     score.add_argument("--verbose", action="store_true", help="DEBUG logging.")
 
+    bfp = sub.add_parser(
+        "backfill-signal-prices",
+        help="One-shot: populate price_at_signal + currency on legacy signal rows.",
+    )
+    bfp.add_argument("--batch", type=int, default=200, help="Max signals per run.")
+    bfp.add_argument("--dry-run", action="store_true", help="No Supabase update.")
+    bfp.add_argument("--verbose", action="store_true", help="DEBUG logging.")
+
     return p
 
 
@@ -417,6 +425,13 @@ def cmd_emit_signal(args: argparse.Namespace) -> int:
     profile = supabase_client.get_profile(args.profile_id)
     indicators = _indicators_from_brief(holding_section)
 
+    raw_price = holding_section.get("current_price")
+    signal_price = float(raw_price) if raw_price is not None else None
+    signal_currency_raw = holding_section.get("currency")
+    signal_currency = (
+        signal_currency_raw.upper() if isinstance(signal_currency_raw, str) else None
+    )
+
     signal = Signal(
         ticker=args.ticker,
         signal_type=args.signal,
@@ -424,6 +439,8 @@ def cmd_emit_signal(args: argparse.Namespace) -> int:
         confidence=args.confidence,
         profile_id=args.profile_id,
         run_id=args.run_id,
+        price_at_signal=signal_price,
+        currency=signal_currency,
     )
 
     if not args.dry_run:
@@ -515,16 +532,22 @@ def _score_one_window(window_days: int, batch: int, dry_run: bool) -> tuple[int,
             skipped += len(sigs)
             continue
         closes = prices["Close"].astype(float)
+        # Normalize index — see backfill-signal-prices for tz + resolution rationale.
         idx = prices.index
-        # idx may be tz-naive (yfinance often emits naive UTC daily bars).
-        if getattr(idx, "tz", None) is None:
-            idx = idx.tz_localize("UTC")
+        if getattr(idx, "tz", None) is not None:
+            idx = idx.tz_convert("UTC").tz_localize(None)
+        try:
+            idx = idx.as_unit("ns")
+        except (AttributeError, TypeError):
+            pass
         for sig in sigs:
             if sig.id is None:
                 skipped += 1
                 continue
             anchor_a = sig.generated_at
-            anchor_b = sig.generated_at + timedelta(days=window_days)
+            if anchor_a.tzinfo is not None:
+                anchor_a = anchor_a.astimezone(timezone.utc).replace(tzinfo=None)
+            anchor_b = anchor_a + timedelta(days=window_days)
             try:
                 pos_a = idx.searchsorted(anchor_a, side="left")
                 pos_b = idx.searchsorted(anchor_b, side="left")
@@ -567,11 +590,123 @@ def cmd_score_signals(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_backfill_signal_prices(args: argparse.Namespace) -> int:
+    market_data.clear_cache()
+    pending = supabase_client.get_signals_needing_price(batch=args.batch)
+    if not pending:
+        log.info("backfill-signal-prices: no signals need a price")
+        return 0
+
+    by_ticker: dict[str, list] = {}
+    for sig in pending:
+        by_ticker.setdefault(sig.ticker, []).append(sig)
+
+    # Cache holding currency per (profile_id, ticker) — the same holding row is
+    # the source of truth for every signal on that ticker for that profile.
+    currency_cache: dict[tuple[str, str], str] = {}
+
+    def _resolve_currency(profile_id: UUID | None, ticker: str) -> str:
+        if profile_id is None:
+            return "DKK"
+        key = (str(profile_id), ticker)
+        if key in currency_cache:
+            return currency_cache[key]
+        try:
+            cur = supabase_client.get_holding_currency(profile_id, ticker)
+        except Exception:
+            log.exception(
+                "backfill-signal-prices: failed currency lookup for %s/%s", profile_id, ticker
+            )
+            cur = None
+        resolved = cur or "DKK"
+        currency_cache[key] = resolved
+        return resolved
+
+    written = skipped = 0
+    skip_reasons: dict[str, int] = {}
+    for ticker, sigs in by_ticker.items():
+        prices = market_data.get_price_history(ticker, period="2y")
+        if prices is None or prices.empty or "Close" not in prices.columns:
+            log.warning(
+                "backfill-signal-prices: no price history for %s; skipping %d signals",
+                ticker,
+                len(sigs),
+            )
+            skipped += len(sigs)
+            skip_reasons["no_price_history"] = skip_reasons.get("no_price_history", 0) + len(sigs)
+            continue
+        closes = prices["Close"].astype(float)
+        # Normalize index for searchsorted:
+        #  - tz: yfinance returns tz-aware in exchange-local time for some tickers;
+        #    drop to naive UTC.
+        #  - resolution: yfinance daily bars are datetime64[s], but signal anchors
+        #    carry microseconds. pandas 2.x refuses lossy us->s conversion, so
+        #    upcast the index to ns where microseconds fit without loss.
+        idx = prices.index
+        if getattr(idx, "tz", None) is not None:
+            idx = idx.tz_convert("UTC").tz_localize(None)
+        try:
+            idx = idx.as_unit("ns")
+        except (AttributeError, TypeError):
+            pass
+        for sig in sigs:
+            if sig.id is None:
+                skipped += 1
+                skip_reasons["no_id"] = skip_reasons.get("no_id", 0) + 1
+                continue
+            anchor = sig.generated_at
+            if anchor.tzinfo is not None:
+                anchor = anchor.astimezone(timezone.utc).replace(tzinfo=None)
+            try:
+                pos = idx.searchsorted(anchor, side="left")
+            except Exception as exc:
+                skipped += 1
+                skip_reasons["searchsorted_error"] = skip_reasons.get("searchsorted_error", 0) + 1
+                log.warning(
+                    "backfill-signal-prices: searchsorted failed for %s @ %s: %r",
+                    ticker, anchor, exc,
+                )
+                continue
+            if pos >= len(closes):
+                skipped += 1
+                skip_reasons["signal_newer_than_data"] = (
+                    skip_reasons.get("signal_newer_than_data", 0) + 1
+                )
+                log.debug(
+                    "backfill-signal-prices: %s signal @ %s is past last close %s",
+                    ticker, sig.generated_at, idx[-1],
+                )
+                continue
+            price = float(closes.iloc[pos])
+            if not price:
+                skipped += 1
+                skip_reasons["zero_price"] = skip_reasons.get("zero_price", 0) + 1
+                continue
+            currency = _resolve_currency(sig.profile_id, ticker)
+            if args.dry_run:
+                log.info(
+                    "[dry-run] would set signal %s price_at_signal=%.6f currency=%s",
+                    sig.id,
+                    price,
+                    currency,
+                )
+            else:
+                supabase_client.update_signal_price(sig.id, price, currency)
+            written += 1
+
+    log.info(
+        "backfill-signal-prices done: written=%d skipped=%d reasons=%s",
+        written, skipped, skip_reasons or "{}",
+    )
+    return 0
+
+
 _DISPATCH = {
     "prepare": cmd_prepare,
     "emit-signal": cmd_emit_signal,
     "finish-run": cmd_finish_run,
     "score-signals": cmd_score_signals,
+    "backfill-signal-prices": cmd_backfill_signal_prices,
 }
 
 

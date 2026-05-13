@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from lib import supabase_client
+from lib.models import Signal
 
 
 class _FakeQuery:
@@ -212,3 +213,104 @@ def test_get_signals_needing_outcome_filters(monkeypatch: pytest.MonkeyPatch) ->
     assert client.last_filter.get("outcome_t5_pct_is") == "null"
     assert "generated_at_lt" in client.last_filter
     assert client.last_filter.get("limit") == 10
+
+
+# ---------------------- insert_signal payload --------------------
+
+
+class _FakeInsertQuery:
+    """Captures a single insert payload for assertion."""
+
+    def __init__(self, log: list) -> None:
+        self.log = log
+
+    def insert(self, payload: dict):
+        self.log.append({"insert": payload})
+        return self
+
+    def execute(self):
+        class _Resp:
+            data: list = []
+
+        return _Resp()
+
+
+class _FakeInsertClient:
+    def __init__(self) -> None:
+        self.calls: list = []
+
+    def table(self, _name: str) -> _FakeInsertQuery:
+        return _FakeInsertQuery(self.calls)
+
+
+def test_insert_signal_payload_includes_price_and_currency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _FakeInsertClient()
+    monkeypatch.setattr(supabase_client, "_client", lambda: client)
+    profile_id = uuid4()
+    run_id = uuid4()
+    sig = Signal(
+        ticker="ABC",
+        signal_type="BUY",
+        reasoning="because",
+        confidence=0.75,
+        profile_id=profile_id,
+        run_id=run_id,
+        price_at_signal=123.456,
+        currency="USD",
+    )
+    supabase_client.insert_signal(sig)
+    assert len(client.calls) == 1
+    payload = client.calls[0]["insert"]
+    assert payload["ticker"] == "ABC"
+    assert payload["signal_type"] == "BUY"
+    assert payload["confidence"] == 0.75
+    assert payload["profile_id"] == str(profile_id)
+    assert payload["run_id"] == str(run_id)
+    assert payload["price_at_signal"] == 123.456
+    assert payload["currency"] == "USD"
+
+
+def test_insert_signal_payload_allows_missing_price_and_currency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _FakeInsertClient()
+    monkeypatch.setattr(supabase_client, "_client", lambda: client)
+    sig = Signal(
+        ticker="ABC",
+        signal_type="HOLD",
+        reasoning="meh",
+        confidence=0.5,
+        profile_id=uuid4(),
+        run_id=uuid4(),
+    )
+    supabase_client.insert_signal(sig)
+    payload = client.calls[0]["insert"]
+    assert payload["price_at_signal"] is None
+    assert payload["currency"] is None
+
+
+# ---------------------- update_signal_price --------------------
+
+
+def test_update_signal_price_writes_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _FakeUpdateClient()
+    monkeypatch.setattr(supabase_client, "_client", lambda: client)
+    sig_id = uuid4()
+    supabase_client.update_signal_price(sig_id, 487.5, "DKK")
+    assert len(client.calls) == 1
+    payload = client.calls[0]["update"]
+    assert payload["price_at_signal"] == 487.5
+    assert payload["currency"] == "DKK"
+    assert client.calls[0]["where"]["id"] == str(sig_id)
+
+
+def test_update_signal_price_rounds_to_six_decimals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _FakeUpdateClient()
+    monkeypatch.setattr(supabase_client, "_client", lambda: client)
+    supabase_client.update_signal_price(uuid4(), 1.123456789, "USD")
+    payload = client.calls[0]["update"]
+    assert payload["price_at_signal"] == round(1.123456789, 6)

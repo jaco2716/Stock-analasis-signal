@@ -35,13 +35,26 @@ python -m run_analysis finish-run \
 
 # 4. (Separate cron task) Backfill realised T+5 / T+30 returns onto past signals.
 python -m run_analysis score-signals [--window 5|30|both] [--batch 200] [--dry-run]
+
+# 5. (Same cron task as 4) Backfill price_at_signal + currency onto signals that
+#    were created before the live emit-signal began writing them, OR that were
+#    generated after the latest yfinance close on a previous run.
+python -m run_analysis backfill-signal-prices [--batch 500] [--dry-run]
 ```
 
-Run `score-signals` daily after market close (suggested cron: 22:00 UTC) on its own
-schedule — it does not depend on `prepare`. The job updates the `outcome_t5_pct` /
-`outcome_t30_pct` columns added in migration `db/migrations/0006_signal_outcomes.sql`,
-and those values are then surfaced to the agent through `signal_history` in the next
-brief.
+Run `score-signals` + `backfill-signal-prices` daily after market close (suggested
+cron: 22:00 UTC) on the same schedule — neither depends on `prepare`.
+`score-signals` updates the `outcome_t5_pct` / `outcome_t30_pct` columns from
+migration `0006_signal_outcomes.sql`, which the agent then sees through
+`signal_history` in the next brief. `backfill-signal-prices` fills the
+`price_at_signal` / `currency` columns from migration `0007_signal_price.sql`
+for any signal that doesn't already have them (older rows, plus today's signals
+once tonight's close is published).
+
+The prompt to register with the Anthropic scheduled agent for this nightly job
+lives in [`nightly_agent_prompt.md`](nightly_agent_prompt.md). Update that file
+when the command set changes; the scheduled-agent registration just points at
+it.
 
 `--dry-run` skips Supabase writes and Discord posts everywhere; `prepare` still writes the brief file (the agent and downstream subcommands need it).
 

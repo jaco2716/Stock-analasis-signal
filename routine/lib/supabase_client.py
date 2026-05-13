@@ -116,8 +116,8 @@ def finish_run(
 
 
 _SIGNAL_SELECT = (
-    "id, ticker, signal_type, confidence, generated_at, run_id, "
-    "outcome_t5_pct, outcome_t30_pct"
+    "id, profile_id, ticker, signal_type, confidence, generated_at, run_id, "
+    "outcome_t5_pct, outcome_t30_pct, price_at_signal, currency"
 )
 
 
@@ -133,6 +133,11 @@ def _parse_signal_row(r: dict) -> SignalRecord:
         outcome_t30_pct=(
             float(r["outcome_t30_pct"]) if r.get("outcome_t30_pct") is not None else None
         ),
+        price_at_signal=(
+            float(r["price_at_signal"]) if r.get("price_at_signal") is not None else None
+        ),
+        currency=r.get("currency"),
+        profile_id=UUID(r["profile_id"]) if r.get("profile_id") else None,
     )
 
 
@@ -214,5 +219,51 @@ def insert_signal(signal: Signal) -> None:
             "reasoning": signal.reasoning,
             "confidence": signal.confidence,
             "generated_at": signal.generated_at.isoformat(),
+            "price_at_signal": signal.price_at_signal,
+            "currency": signal.currency,
         }
     ).execute()
+
+
+def get_signals_needing_price(batch: int = 200) -> list[SignalRecord]:
+    """Signals missing price_at_signal, oldest first so backfill is deterministic."""
+    rows = (
+        _client()
+        .table("signals")
+        .select(_SIGNAL_SELECT)
+        .is_("price_at_signal", "null")
+        .order("generated_at", desc=False)
+        .limit(batch)
+        .execute()
+        .data
+        or []
+    )
+    return [_parse_signal_row(r) for r in rows]
+
+
+def get_holding_currency(profile_id: UUID, ticker: str) -> str | None:
+    """Look up the currency on a portfolio_holdings row; None if no match."""
+    rows = (
+        _client()
+        .table("portfolio_holdings")
+        .select("currency")
+        .eq("profile_id", str(profile_id))
+        .eq("ticker", ticker)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    if not rows:
+        return None
+    cur = rows[0].get("currency")
+    return cur.upper() if isinstance(cur, str) else None
+
+
+def update_signal_price(signal_id: UUID, price_at_signal: float, currency: str) -> None:
+    _client().table("signals").update(
+        {
+            "price_at_signal": round(float(price_at_signal), 6),
+            "currency": currency,
+        }
+    ).eq("id", str(signal_id)).execute()

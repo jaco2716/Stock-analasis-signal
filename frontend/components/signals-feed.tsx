@@ -45,6 +45,12 @@ export const SignalsFeed = ({
                     {s.signal_type}
                   </Badge>
                   <span className="font-mono font-medium">{s.ticker}</span>
+                  {s.price_at_signal != null ? (
+                    <span className="text-xs text-muted-foreground">
+                      @ {s.price_at_signal}
+                      {s.currency ? ` ${s.currency}` : ""}
+                    </span>
+                  ) : null}
                   <span className="text-sm text-muted-foreground">
                     {formatPercent(s.confidence)} confidence
                   </span>

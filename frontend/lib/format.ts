@@ -17,6 +17,11 @@ export const formatMoney = (
   }
 };
 
+export const formatCurrency = (
+  n: number | null | undefined,
+  currency: string,
+): string => formatMoney(n, currency);
+
 export const formatDKK = (n: number | null | undefined): string =>
   formatMoney(n, "DKK");
 
