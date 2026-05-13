@@ -33,6 +33,7 @@ class HoldingContext:
     pnl_pct: float | None
     currency: str
     is_watchlist: bool
+    name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,7 @@ class HoldSummaryItem:
     reasoning: str
     is_watchlist: bool
     pnl_pct: float | None
+    name: str | None = None
 
 
 def _truncate(text: str, n: int) -> str:
@@ -94,8 +96,12 @@ def build_payload(
     using_fallback: bool,
 ) -> dict:
     title = f"{signal.signal_type} {signal.ticker}"
+    if ctx.name:
+        title = f"{title} — {ctx.name}"
     if using_fallback:
         title = f"[{profile.name}] {title}"
+    # Discord embed titles cap at 256 chars.
+    title = _truncate(title, 256)
 
     rsi = f"{indicators.rsi_14:.1f}" if indicators.rsi_14 is not None else "n/a"
     price = f"{indicators.last_close:.2f}"
@@ -172,8 +178,9 @@ def _hold_summary_line(item: HoldSummaryItem) -> str:
     if not item.is_watchlist and item.pnl_pct is not None:
         sign = "+" if item.pnl_pct >= 0 else ""
         pnl_str = f" · {sign}{item.pnl_pct:.1f}%"
+    name_str = f" — {item.name}" if item.name else ""
     header = (
-        f"**{item.ticker}**{watch_tag} · "
+        f"**{item.ticker}**{name_str}{watch_tag} · "
         f"{item.current_price:.2f} {item.currency} · "
         f"{rsi_str} · {conf_str}{pnl_str}"
     )

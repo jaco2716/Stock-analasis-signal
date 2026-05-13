@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
@@ -24,11 +24,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { addHolding, lookupTickerCurrency } from "@/app/_actions/holdings";
+import { addHolding, lookupTicker } from "@/app/_actions/holdings";
 import type { HoldingKind } from "@/lib/types";
-
-const COMMON_CURRENCIES = ["DKK", "USD", "EUR", "GBP", "SEK", "NOK"] as const;
-const DEFAULT_CURRENCY = "DKK";
 
 const positiveOptionalNumber = z
   .string()
@@ -43,15 +40,9 @@ const formSchema = z
       .min(1, "Ticker is required")
       .max(16)
       .transform((s) => s.toUpperCase()),
-    name: z.string().trim().max(200).optional(),
     kind: z.enum(["owned", "watchlist"]),
     quantity: positiveOptionalNumber,
     avg_buy_price: positiveOptionalNumber,
-    currency: z
-      .string()
-      .trim()
-      .toUpperCase()
-      .regex(/^[A-Z]{3}$/, "3-letter ISO code"),
   })
   .superRefine((v, ctx) => {
     if (v.kind !== "owned") return;
@@ -73,6 +64,12 @@ const formSchema = z
 
 type FormValues = z.input<typeof formSchema>;
 
+type LookupState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "found"; currency: string; name: string }
+  | { status: "not_found" };
+
 interface AddTickerFormProps {
   profileId: string;
   profileSlug: string;
@@ -84,24 +81,47 @@ export const AddTickerForm = ({
 }: AddTickerFormProps) => {
   const [pending, startTransition] = useTransition();
   const [kind, setKind] = useState<HoldingKind>("owned");
-  // Track whether the user has manually picked a currency. Only auto-prefill
-  // from yfinance when they haven't, so we never overwrite their explicit choice.
-  const currencyTouchedRef = useRef(false);
+  const [lookup, setLookup] = useState<LookupState>({ status: "idle" });
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
       ticker: "",
-      name: "",
       kind: "owned",
       quantity: "",
       avg_buy_price: "",
-      currency: DEFAULT_CURRENCY,
     },
   });
 
+  const runLookup = async (rawTicker: string): Promise<LookupState> => {
+    const ticker = rawTicker.trim().toUpperCase();
+    if (!ticker) {
+      const next: LookupState = { status: "idle" };
+      setLookup(next);
+      return next;
+    }
+    setLookup({ status: "loading" });
+    const result = await lookupTicker({ ticker });
+    const next: LookupState = result
+      ? { status: "found", currency: result.currency, name: result.name }
+      : { status: "not_found" };
+    setLookup(next);
+    return next;
+  };
+
   const onSubmit = (values: FormValues) => {
     startTransition(async () => {
+      // Re-run the lookup so a click-without-blur can't race ahead with stale state.
+      let state = lookup;
+      if (state.status !== "found") {
+        state = await runLookup(values.ticker);
+      }
+      if (state.status !== "found") {
+        toast.error(
+          "Ticker not found. Try an exchange suffix (e.g. RHM.DE, NOVO-B.CO).",
+        );
+        return;
+      }
       const isOwned = values.kind === "owned";
       const qty = Number(values.quantity);
       const avg = Number(values.avg_buy_price);
@@ -109,22 +129,20 @@ export const AddTickerForm = ({
         profileId,
         profileSlug,
         ticker: values.ticker,
-        name: values.name?.trim() ? values.name : undefined,
+        name: state.name,
         kind: values.kind,
         quantity: isOwned && Number.isFinite(qty) ? qty : undefined,
         avg_buy_price: isOwned && Number.isFinite(avg) ? avg : undefined,
-        currency: values.currency,
+        currency: state.currency,
       });
       if (result.ok) {
-        toast.success(`Added ${values.ticker.toUpperCase()}`);
-        currencyTouchedRef.current = false;
+        toast.success(`Added ${values.ticker.toUpperCase()} — ${state.name}`);
+        setLookup({ status: "idle" });
         form.reset({
           ticker: "",
-          name: "",
           kind: values.kind,
           quantity: "",
           avg_buy_price: "",
-          currency: DEFAULT_CURRENCY,
         });
       } else {
         toast.error(result.error);
@@ -133,21 +151,22 @@ export const AddTickerForm = ({
   };
 
   const handleTickerBlur = async (rawTicker: string) => {
-    const ticker = rawTicker.trim().toUpperCase();
-    if (!ticker || currencyTouchedRef.current) return;
-    const result = await lookupTickerCurrency({ ticker });
-    if (result && !currencyTouchedRef.current) {
-      form.setValue("currency", result.currency, { shouldValidate: true });
-    }
+    await runLookup(rawTicker);
   };
 
   const ownedDisabled = kind !== "owned";
-  const currentCurrency = form.watch("currency") || DEFAULT_CURRENCY;
-  const currencyOptions = COMMON_CURRENCIES.includes(
-    currentCurrency as (typeof COMMON_CURRENCIES)[number],
-  )
-    ? [...COMMON_CURRENCIES]
-    : [...COMMON_CURRENCIES, currentCurrency];
+  const displayName = lookup.status === "found" ? lookup.name : "";
+  const displayCurrency = lookup.status === "found" ? lookup.currency : "";
+  const canSubmit = !pending && lookup.status === "found";
+
+  const tickerHint =
+    lookup.status === "loading"
+      ? "Looking up…"
+      : lookup.status === "found"
+        ? `Found: ${lookup.name} (${lookup.currency})`
+        : lookup.status === "not_found"
+          ? "Not found. Try an exchange suffix (e.g. RHM.DE, NOVO-B.CO)."
+          : "Include exchange suffix for non-US tickers.";
 
   return (
     <Form {...form}>
@@ -190,9 +209,13 @@ export const AddTickerForm = ({
               <FormLabel>Ticker</FormLabel>
               <FormControl>
                 <Input
-                  placeholder="NOVO-B"
+                  placeholder="NOVO-B.CO"
                   {...field}
-                  onChange={(e) => field.onChange(e.target.value.toUpperCase())}
+                  onChange={(e) => {
+                    field.onChange(e.target.value.toUpperCase());
+                    // Invalidate prior lookup as soon as the ticker changes.
+                    if (lookup.status !== "idle") setLookup({ status: "idle" });
+                  }}
                   onBlur={(e) => {
                     field.onBlur();
                     void handleTickerBlur(e.target.value);
@@ -200,23 +223,30 @@ export const AddTickerForm = ({
                   className="font-mono uppercase"
                 />
               </FormControl>
+              <FormDescription
+                className={
+                  lookup.status === "not_found" ? "text-destructive" : undefined
+                }
+              >
+                {tickerHint}
+              </FormDescription>
               <FormMessage />
             </FormItem>
           )}
         />
-        <FormField
-          control={form.control}
-          name="name"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Name</FormLabel>
-              <FormControl>
-                <Input placeholder="Optional" {...field} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
+        <FormItem>
+          <FormLabel>Name</FormLabel>
+          <FormControl>
+            <Input
+              value={displayName}
+              readOnly
+              tabIndex={-1}
+              placeholder="Auto"
+              aria-label="Name (auto-filled)"
+            />
+          </FormControl>
+          <FormDescription>Auto-filled.</FormDescription>
+        </FormItem>
         <FormField
           control={form.control}
           name="quantity"
@@ -244,7 +274,7 @@ export const AddTickerForm = ({
           name="avg_buy_price"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Avg buy ({currentCurrency})</FormLabel>
+              <FormLabel>Avg buy ({displayCurrency || "—"})</FormLabel>
               <FormControl>
                 <Input
                   type="number"
@@ -261,39 +291,22 @@ export const AddTickerForm = ({
             </FormItem>
           )}
         />
-        <FormField
-          control={form.control}
-          name="currency"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Currency</FormLabel>
-              <Select
-                value={field.value}
-                onValueChange={(v) => {
-                  currencyTouchedRef.current = true;
-                  field.onChange(v);
-                }}
-              >
-                <FormControl>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                </FormControl>
-                <SelectContent>
-                  {currencyOptions.map((c) => (
-                    <SelectItem key={c} value={c}>
-                      {c}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <FormDescription>Auto-detected from ticker.</FormDescription>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
+        <FormItem>
+          <FormLabel>Currency</FormLabel>
+          <FormControl>
+            <Input
+              value={displayCurrency}
+              readOnly
+              tabIndex={-1}
+              placeholder="Auto"
+              className="font-mono"
+              aria-label="Currency (auto-detected)"
+            />
+          </FormControl>
+          <FormDescription>Auto-detected.</FormDescription>
+        </FormItem>
         <div className="flex items-end">
-          <Button type="submit" disabled={pending} className="w-full">
+          <Button type="submit" disabled={!canSubmit} className="w-full">
             {pending ? "Adding..." : "Add"}
           </Button>
         </div>

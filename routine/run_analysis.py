@@ -431,6 +431,7 @@ def cmd_emit_signal(args: argparse.Namespace) -> int:
 
     currency = holding_section.get("currency") or "DKK"
     is_watchlist = holding_section.get("kind") == "watchlist"
+    holding_name = holding_section.get("name") or None
 
     if args.signal == "HOLD":
         item = discord.HoldSummaryItem(
@@ -442,6 +443,7 @@ def cmd_emit_signal(args: argparse.Namespace) -> int:
             reasoning=args.reasoning,
             is_watchlist=is_watchlist,
             pnl_pct=holding_section.get("pnl_pct"),
+            name=holding_name,
         )
         if args.dry_run:
             log.info("[dry-run] would queue HOLD %s for batched summary", args.ticker)
@@ -457,6 +459,7 @@ def cmd_emit_signal(args: argparse.Namespace) -> int:
         pnl_pct=holding_section.get("pnl_pct"),
         currency=currency,
         is_watchlist=is_watchlist,
+        name=holding_name,
     )
     discord.post_signal(
         signal=signal,

@@ -132,12 +132,12 @@ export const removeHolding = async (
   }
 };
 
-// Yahoo's chart endpoint returns the security's native currency in
-// `chart.result[0].meta.currency`. Same source yfinance uses, no auth required.
-// On any failure we return null so the form falls back to its manual default.
-export const lookupTickerCurrency = async (
+// Yahoo's chart endpoint returns the security's native currency and display
+// name in `chart.result[0].meta`. Same source yfinance uses, no auth required.
+// Returns null on any failure so the form can block submission.
+export const lookupTicker = async (
   input: z.input<typeof lookupTickerSchema>,
-): Promise<{ currency: string } | null> => {
+): Promise<{ currency: string; name: string } | null> => {
   try {
     const { ticker } = lookupTickerSchema.parse(input);
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
@@ -150,11 +150,25 @@ export const lookupTickerCurrency = async (
     });
     if (!res.ok) return null;
     const data = (await res.json()) as {
-      chart?: { result?: Array<{ meta?: { currency?: string } }> };
+      chart?: {
+        result?: Array<{
+          meta?: {
+            currency?: string;
+            longName?: string;
+            shortName?: string;
+          };
+        }>;
+      };
     };
-    const code = data.chart?.result?.[0]?.meta?.currency;
+    const meta = data.chart?.result?.[0]?.meta;
+    const code = meta?.currency;
     if (typeof code !== "string" || !/^[A-Z]{3}$/i.test(code)) return null;
-    return { currency: code.toUpperCase() };
+    const rawName =
+      (typeof meta?.longName === "string" && meta.longName.trim()) ||
+      (typeof meta?.shortName === "string" && meta.shortName.trim()) ||
+      "";
+    if (!rawName) return null;
+    return { currency: code.toUpperCase(), name: rawName };
   } catch {
     return null;
   }

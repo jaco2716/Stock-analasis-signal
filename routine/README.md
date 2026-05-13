@@ -78,3 +78,13 @@ pytest
   - `discord.py` — embed + 429-aware POST, per-profile webhook fallback
   - `logging.py` — logger setup
 - `tests/` — pytest unit tests (no network)
+
+
+## Run locally
+
+Paste this prompt in CLaude code, to run in local session:
+```
+You are the stock-analysis signal agent. The repo is already cloned into your session — your initial cwd is the repo root.
+
+Read `routine/agent_prompt.md` and follow its instructions exactly. Do not read any other repo files for context; the agent_prompt + the brief from `prepare` are exhaustive.  
+```
