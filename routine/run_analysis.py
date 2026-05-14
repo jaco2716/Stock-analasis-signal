@@ -3,6 +3,7 @@
 import argparse
 import json
 import logging
+import math
 import sys
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
@@ -678,7 +679,7 @@ def cmd_backfill_signal_prices(args: argparse.Namespace) -> int:
                 )
                 continue
             price = float(closes.iloc[pos])
-            if not price:
+            if not price or math.isnan(price):
                 skipped += 1
                 skip_reasons["zero_price"] = skip_reasons.get("zero_price", 0) + 1
                 continue
